@@ -16,6 +16,13 @@ def warn(msg): print("  [warn] %s" % msg)
 def main() -> int:
     failures = 0
 
+    # Same .env loading as run_live.py, so this works standalone.
+    try:
+        from run_live import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
+
     print("\n1. Delta Exchange market data")
     try:
         from predict_paper.delta import DeltaClient
