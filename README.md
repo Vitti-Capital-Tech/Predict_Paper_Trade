@@ -9,6 +9,9 @@ risking capital. Three pieces:
 | `supabase/schema.sql` | Postgres tables for runs, positions, events and market snapshots |
 | `web/` (React + Tailwind) | Responsive dashboard that reads Supabase live |
 
+**Design docs:** [HLD](docs/HLD.md) (architecture, data flow, decisions) ·
+[LLD](docs/LLD.md) (modules, algorithms, schema, config reference)
+
 The worker is **read-only against Delta** — no API key, no authentication, and it
 cannot place a real order.
 
