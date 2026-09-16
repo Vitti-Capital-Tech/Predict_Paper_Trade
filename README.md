@@ -103,6 +103,47 @@ python run_live.py --report-only      # summarise an existing ledger
 
 ---
 
+## Deploying
+
+### What can and cannot go on Vercel
+
+**Vercel hosts the dashboard only.** The worker in `predict_paper/` is a
+long-running poller that must stay alive between polls, which serverless
+functions cannot do — they are killed after seconds. Vercel will build and serve
+`web/`, and nothing else in this repo runs there.
+
+**The worker has to run somewhere that allows a persistent process**: your own
+machine, a small VPS, Railway, Render, Fly.io, or a container anywhere. If no
+worker is running, the dashboard connects fine and shows nothing, because
+nothing is writing to Supabase.
+
+### Vercel setup
+
+`vercel.json` at the repo root already points the build at `web/`, so importing
+the repo needs no Root Directory change. Add two environment variables in
+**Project Settings → Environment Variables**:
+
+```
+VITE_SUPABASE_URL       https://xxxx.supabase.co
+VITE_SUPABASE_ANON_KEY  <anon key>
+```
+
+Vite inlines `VITE_*` variables into the client bundle at build time, so
+**redeploy after adding them** — changing them later without a rebuild has no
+effect.
+
+### Two things to be aware of
+
+- The anon key is visible in the published bundle. That is normal and safe here:
+  RLS grants it read-only access and the worker writes with the service role key.
+  But it does mean **anyone with your Vercel URL can read your trading history**.
+  If that matters, put Vercel Authentication (Deployment Protection) in front of
+  it, or keep the dashboard local and skip Vercel entirely.
+- The service role key belongs only in the worker's environment. Never add it to
+  Vercel, and never prefix it with `VITE_`.
+
+---
+
 ## The strategy, and where it was ambiguous
 
 Your original note:
