@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-950: #070a10;
+  --color-ink-900: #0b0f17;
+  --color-ink-800: #131926;
+  --color-ink-700: #1c2434;
+  --color-ink-600: #2a3446;
+}
+
+/* min-height, not height: the page is taller than the viewport, and pinning
+   #root to 100% lets content overflow its own box and breaks the sticky header. */
+html, body, #root { min-height: 100%; }
+
+body {
+  background: var(--color-ink-950);
+  color: #e2e8f0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular numbers everywhere prices and P&L are shown, so columns line up. */
+.nums { font-variant-numeric: tabular-nums; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a3446; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #3a4659; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.live-dot { animation: pulse-dot 1.8s ease-in-out infinite; }

@@ -1,0 +1,184 @@
+"""Group binary tickers into rounds and label strikes 1st / middle / last.
+
+Delta launches a new Predict round every ~15 minutes, ~20 minutes before it
+settles, with N strikes (3 for BTC, spaced 100) each having a Call and a Put.
+Symbols look like:  B-C-BTC-75600-1609261915  /  B-P-BTC-75600-1609261915
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+SYMBOL_RE = re.compile(r"^B-(?P<side>[CP])-(?P<asset>[A-Z0-9]+)-(?P<strike>[0-9.]+)-(?P<expiry>\d{10})$")
+
+
+def parse_symbol(symbol: str) -> Optional[Dict[str, Any]]:
+    m = SYMBOL_RE.match(symbol or "")
+    if not m:
+        return None
+    return {
+        "symbol": symbol,
+        "side": "call" if m.group("side") == "C" else "put",
+        "asset": m.group("asset"),
+        "strike": float(m.group("strike")),
+        "expiry_code": m.group("expiry"),
+    }
+
+
+def expiry_code_to_dt(code: str) -> Optional[datetime]:
+    """DDMMYYHHMM -> aware UTC datetime."""
+    try:
+        return datetime.strptime(code, "%d%m%y%H%M").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _f(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out
+
+
+@dataclass
+class Contract:
+    symbol: str
+    side: str          # call | put
+    asset: str
+    strike: float
+    expiry_code: str
+    best_bid: Optional[float] = None
+    best_ask: Optional[float] = None
+    bid_size: Optional[float] = None
+    ask_size: Optional[float] = None
+    mark_price: Optional[float] = None
+    spot_price: Optional[float] = None
+    product_id: Optional[int] = None
+    tick_size: float = 0.0001
+
+    @property
+    def mid(self) -> Optional[float]:
+        if self.best_bid is None or self.best_ask is None:
+            return None
+        return (self.best_bid + self.best_ask) / 2.0
+
+    @property
+    def spread(self) -> Optional[float]:
+        if self.best_bid is None or self.best_ask is None:
+            return None
+        return self.best_ask - self.best_bid
+
+    @classmethod
+    def from_ticker(cls, t: Dict[str, Any]) -> Optional["Contract"]:
+        parsed = parse_symbol(t.get("symbol", ""))
+        if not parsed:
+            return None
+        q = t.get("quotes") or {}
+        return cls(
+            symbol=parsed["symbol"], side=parsed["side"], asset=parsed["asset"],
+            strike=parsed["strike"], expiry_code=parsed["expiry_code"],
+            best_bid=_f(q.get("best_bid")), best_ask=_f(q.get("best_ask")),
+            bid_size=_f(q.get("bid_size")), ask_size=_f(q.get("ask_size")),
+            mark_price=_f(t.get("mark_price")), spot_price=_f(t.get("spot_price")),
+            product_id=t.get("product_id"), tick_size=_f(t.get("tick_size")) or 0.0001,
+        )
+
+
+@dataclass
+class Round:
+    """One expiry of one asset: all strikes, both sides."""
+    asset: str
+    expiry_code: str
+    expiry: datetime
+    contracts: List[Contract] = field(default_factory=list)
+    launch_time: Optional[datetime] = None
+
+    @property
+    def round_id(self) -> str:
+        return f"{self.asset}-{self.expiry_code}"
+
+    @property
+    def strikes(self) -> List[float]:
+        return sorted({c.strike for c in self.contracts})
+
+    @property
+    def spot(self) -> Optional[float]:
+        for c in self.contracts:
+            if c.spot_price is not None:
+                return c.spot_price
+        return None
+
+    def get(self, strike: float, side: str) -> Optional[Contract]:
+        for c in self.contracts:
+            if c.strike == strike and c.side == side:
+                return c
+        return None
+
+    def seconds_to_expiry(self, now: datetime) -> float:
+        return (self.expiry - now).total_seconds()
+
+    def seconds_since_launch(self, now: datetime) -> Optional[float]:
+        if self.launch_time is None:
+            return None
+        return (now - self.launch_time).total_seconds()
+
+    # ---- strike roles ---------------------------------------------------
+    def wing_legs(self) -> Dict[str, Optional[Contract]]:
+        """'1st and last strike' as a long strangle: Put at the lowest strike,
+        Call at the highest. Both are OTM while spot sits between them, which is
+        what makes them cheap enough to clear a 1:5 odds test."""
+        strikes = self.strikes
+        if len(strikes) < 2:
+            return {"low": None, "high": None}
+        return {"low": self.get(strikes[0], "put"),
+                "high": self.get(strikes[-1], "call")}
+
+    def middle_strike(self) -> Optional[float]:
+        strikes = self.strikes
+        if len(strikes) < 3:
+            return None
+        return strikes[len(strikes) // 2]
+
+    def middle_legs(self) -> Dict[str, Optional[Contract]]:
+        mid = self.middle_strike()
+        if mid is None:
+            return {"call": None, "put": None}
+        return {"call": self.get(mid, "call"), "put": self.get(mid, "put")}
+
+
+def build_rounds(tickers: List[Dict[str, Any]], asset: str = "BTC",
+                 products: Optional[List[Dict[str, Any]]] = None) -> List[Round]:
+    """Assemble Round objects from a bulk ticker response."""
+    launch_by_symbol: Dict[str, datetime] = {}
+    for p in products or []:
+        lt = p.get("launch_time")
+        if p.get("symbol") and lt:
+            try:
+                launch_by_symbol[p["symbol"]] = datetime.fromisoformat(
+                    str(lt).replace("Z", "+00:00"))
+            except ValueError:
+                pass
+
+    by_expiry: Dict[str, Round] = {}
+    for t in tickers:
+        c = Contract.from_ticker(t)
+        if c is None or c.asset != asset:
+            continue
+        rnd = by_expiry.get(c.expiry_code)
+        if rnd is None:
+            exp = expiry_code_to_dt(c.expiry_code)
+            if exp is None:
+                continue
+            rnd = Round(asset=c.asset, expiry_code=c.expiry_code, expiry=exp)
+            by_expiry[c.expiry_code] = rnd
+        rnd.contracts.append(c)
+        lt = launch_by_symbol.get(c.symbol)
+        if lt and (rnd.launch_time is None or lt < rnd.launch_time):
+            rnd.launch_time = lt
+
+    return sorted(by_expiry.values(), key=lambda r: r.expiry)

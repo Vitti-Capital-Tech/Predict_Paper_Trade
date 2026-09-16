@@ -1,0 +1,29 @@
+# Secrets - never commit these
+.env
+.env.*
+!.env.example
+web/.env
+web/.env.*
+!web/.env.example
+
+# Local paper-trading ledger, logs and run output
+data/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+
+# Deploy / editor / OS
+.vercel
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
