@@ -3,6 +3,7 @@ import { isConfigured, fetchAccounts, fetchLatestRun } from './lib/supabase'
 import TradePanel from './components/TradePanel'
 import PortfolioTabs from './components/PortfolioTabs'
 import AccountBar from './components/AccountBar'
+import Logo from './components/Logo'
 
 function Setup() {
   return (
@@ -92,7 +93,10 @@ export default function App() {
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-white/5 bg-ink-950/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
-          <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>
+          <div className="flex items-center gap-2.5">
+            <Logo className="h-7 w-7" />
+            <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>
+          </div>
 
           <AccountBar
             account={account}

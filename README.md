@@ -108,17 +108,54 @@ python run_live.py --report-only      # summarise an existing ledger
 
 ## Deploying
 
-### What can and cannot go on Vercel
+### Three pieces, three homes
 
-**Vercel hosts the dashboard only.** The worker in `predict_paper/` is a
-long-running poller that must stay alive between polls, which serverless
-functions cannot do — they are killed after seconds. Vercel will build and serve
-`web/`, and nothing else in this repo runs there.
+| Piece | Runs on | Why |
+|---|---|---|
+| Dashboard (`web/`) | Vercel | Static files, nothing to keep alive |
+| Database | Supabase | Managed Postgres |
+| **Worker** (`predict_paper/`) | **needs its own host** | A process that must stay alive |
 
-**The worker has to run somewhere that allows a persistent process**: your own
-machine, a small VPS, Railway, Render, Fly.io, or a container anywhere. If no
-worker is running, the dashboard connects fine and shows nothing, because
-nothing is writing to Supabase.
+**Supabase does not run the worker, and neither does Vercel.** Supabase is a
+database: it stores what the worker writes and serves it to the dashboard, but
+it executes no Python. Vercel serves static files and serverless functions,
+which are killed after seconds.
+
+The worker polls Delta every couple of seconds, holds open positions in
+memory, and has to be alive at the moment a take-profit or a settlement
+happens. That needs a host that simply keeps a process running.
+
+If nothing is running it, the dashboard loads fine and stays empty, and a
+queued order sits `pending` forever — which is what the "no worker is running
+to fill it" warning means.
+
+### Hosting the worker
+
+`Dockerfile` and `render.yaml` are in the repo. On Render: **New → Blueprint**,
+point it at this repo, and set `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` in
+the dashboard. The service type is `worker` — a background process with no HTTP
+port — and Render restarts it if it exits.
+
+Railway and Fly.io take the same Dockerfile. A small VPS works too:
+
+```bash
+pip install -r requirements.txt
+nohup python run_live.py --run-name cloud > worker.log 2>&1 &
+```
+
+Or just run it on your own machine while you want data collected:
+
+```bash
+python run_live.py
+```
+
+That is free and fine for testing, but it only trades while the machine is
+awake, and these rounds settle every 15 minutes.
+
+> Two caveats for any host. Open positions live in memory, so a restart
+> abandons them — they stay `open` in the database until manually resolved.
+> And `data/*.jsonl` is ephemeral on most hosts; Supabase is the book of
+> record, the JSONL is the local fallback.
 
 ### Vercel setup
 

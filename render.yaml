@@ -1,0 +1,21 @@
+# Render blueprint for the worker.
+#
+# type: worker — a background process with no HTTP port. Render keeps it
+# running and restarts it if it exits, which is exactly what this needs and
+# what neither Supabase nor Vercel provides.
+#
+# Deploy: push this repo, then New > Blueprint on render.com and point it here.
+# Set the two secrets in the dashboard; they are marked sync:false so they are
+# never read from this file.
+services:
+  - type: worker
+    name: predict-paper-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false

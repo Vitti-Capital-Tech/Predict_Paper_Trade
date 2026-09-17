@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Predict">
+  <!--
+    Favicon build of the mark. Deliberately reduced to three shapes: at 16px
+    anything finer turns to mush, so the target rule is solid rather than
+    dashed and the price line keeps only the one turn that matters — the
+    crossing.
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#121a2a"/>
+      <stop offset="100%" stop-color="#080c14"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+
+  <!-- the target threshold a Predict market resolves against -->
+  <line x1="11" y1="38" x2="53" y2="38" stroke="#5d6b82" stroke-width="3.5"
+        stroke-linecap="round"/>
+
+  <!-- price crossing it -->
+  <path d="M12 47 L26 43 L38 25 L52 15" fill="none" stroke="#2f8fef"
+        stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <circle cx="52" cy="15" r="5" fill="#2f8fef"/>
+</svg>
