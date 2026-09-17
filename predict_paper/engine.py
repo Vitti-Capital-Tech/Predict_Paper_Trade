@@ -187,6 +187,96 @@ class Engine:
                 rnd.round_id, leg.contract.symbol, leg.role, leg.contract.side,
                 leg.contract.strike, fill, now, decision.spot, atr)
 
+    # ---- manual orders from the trade panel -----------------------------
+    def process_manual_orders(self, by_symbol: Dict[str, Contract],
+                              now: datetime, atr: Optional[float]) -> None:
+        """Execute orders queued by the trade panel.
+
+        The browser can only record an intent (dollar amount + the price it was
+        shown). The fill is simulated here against real depth, so a manual paper
+        trade is exactly as honest as a bot entry.
+        """
+        orders = self.store.pending_manual_orders()
+        if not orders:
+            return
+
+        for order in orders:
+            oid = order.get("id")
+            symbol = order.get("symbol")
+            contract = by_symbol.get(symbol)
+
+            if contract is None:
+                self.store.resolve_manual_order(
+                    oid, "rejected",
+                    reject_reason="market no longer live (expired or delisted)")
+                log.info("MANUAL rejected %s: not live", symbol)
+                continue
+
+            if self.portfolio.position_for(symbol) is not None:
+                self.store.resolve_manual_order(
+                    oid, "rejected", reject_reason="already holding this contract")
+                continue
+
+            ask = contract.best_ask
+            if ask is None or ask <= 0:
+                self.store.resolve_manual_order(
+                    oid, "rejected", reject_reason="no ask quoted")
+                continue
+
+            # Delta's panel sizes by dollars: contracts = round(investment / price),
+            # each paying 1.00 if correct. Verified against the app's own numbers.
+            investment = float(order.get("investment") or 0)
+            qty = round(investment / ask)
+            if qty < 1:
+                self.store.resolve_manual_order(
+                    oid, "rejected",
+                    reject_reason="investment $%.2f too small at price %.4f"
+                                  % (investment, ask))
+                continue
+
+            book = self._book(symbol)
+            fill = self.fills.simulate("buy", qty, book, contract.best_bid,
+                                       contract.best_ask, contract.mark_price)
+            if not fill.filled:
+                self.store.resolve_manual_order(
+                    oid, "rejected", reject_reason=fill.reason)
+                log.info("MANUAL rejected %s: %s", symbol, fill.reason)
+                continue
+
+            # Honour the panel's slippage tolerance against the price the user
+            # was actually shown, not against the current touch.
+            quoted = order.get("quoted_price")
+            tol = float(order.get("slippage_tolerance") or 0)
+            if quoted is not None:
+                drift = fill.avg_price - float(quoted)
+                if drift > tol:
+                    self.store.resolve_manual_order(
+                        oid, "rejected",
+                        reject_reason="slippage $%.4f exceeds tolerance $%.2f "
+                                      "(quoted %.4f, fill %.4f)"
+                                      % (drift, tol, float(quoted), fill.avg_price))
+                    log.info("MANUAL rejected %s: slippage %.4f > %.2f",
+                             symbol, drift, tol)
+                    continue
+
+            cost = fill.qty * fill.avg_price
+            if cost > self.portfolio.cash:
+                self.store.resolve_manual_order(
+                    oid, "rejected",
+                    reject_reason="cost $%.2f exceeds cash $%.2f"
+                                  % (cost, self.portfolio.cash))
+                continue
+
+            pos = self.portfolio.open_position(
+                order.get("round_id") or "manual", symbol, "manual",
+                contract.side, contract.strike, fill, now,
+                contract.spot_price, atr)
+            self.store.resolve_manual_order(
+                oid, "filled", position_id=pos.position_id,
+                fill_price=fill.avg_price, contracts=fill.qty)
+            log.info("MANUAL filled %s qty=%.0f @ %.4f (quoted %s)",
+                     symbol, fill.qty, fill.avg_price, quoted)
+
     # ---- main loop ------------------------------------------------------
     def poll_once(self) -> None:
         now_ts = time.time()
@@ -207,6 +297,10 @@ class Engine:
         self.manage_exits(by_symbol, now)
 
         atr_ok, atr = self.atr_gate.passes(now_ts)
+
+        # Manual trades are not subject to the strategy's filters - the user
+        # asked for them explicitly - but they are subject to the same fills.
+        self.process_manual_orders(by_symbol, now, atr)
 
         for rnd in rounds:
             if rnd.round_id not in self._seen_rounds:
@@ -260,6 +354,13 @@ class Engine:
                 "wing_high": self._leg_payload(wings["high"], self.cfg.wing_max_price),
                 "middle_call": self._leg_payload(mids["call"], self.cfg.middle_max_price),
                 "middle_put": self._leg_payload(mids["put"], self.cfg.middle_max_price),
+                # Every instrument in the round, for the Predict-style trade panel.
+                "legs": [
+                    {"symbol": c.symbol, "side": c.side, "strike": c.strike,
+                     "bid": c.best_bid, "ask": c.best_ask, "mark": c.mark_price,
+                     "bid_size": c.bid_size, "ask_size": c.ask_size}
+                    for c in sorted(rnd.contracts, key=lambda x: (x.strike, x.side))
+                ],
             })
         try:
             self.store.snapshot(spot, atr, atr_ok, payload)

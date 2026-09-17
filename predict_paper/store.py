@@ -39,6 +39,8 @@ class NullStore:
     def snapshot(self, *a: Any, **k: Any) -> None: return None
     def heartbeat(self, *a: Any, **k: Any) -> None: return None
     def finish_run(self, *a: Any, **k: Any) -> None: return None
+    def pending_manual_orders(self, *a: Any, **k: Any) -> list: return []
+    def resolve_manual_order(self, *a: Any, **k: Any) -> None: return None
 
 
 class SupabaseStore:
@@ -175,6 +177,37 @@ class SupabaseStore:
                     {"last_heartbeat": datetime.now(timezone.utc).isoformat(),
                      "cash": cash},
                     {"id": "eq.%d" % self.run_id})
+
+    # ---- manual orders from the trade panel -----------------------------
+    def pending_manual_orders(self) -> List[Dict[str, Any]]:
+        url = "%s/manual_orders" % self.base
+        try:
+            r = self.session.get(url, timeout=self.timeout, params={
+                "status": "eq.pending", "order": "created_at.asc", "limit": "25",
+            })
+            if r.status_code >= 400:
+                self._note_failure("manual_orders -> %s" % r.status_code)
+                return []
+            return r.json() or []
+        except Exception as exc:  # noqa: BLE001
+            self._note_failure("manual_orders -> %s" % exc)
+            return []
+
+    def resolve_manual_order(self, order_id: int, status: str,
+                             position_id: Optional[str] = None,
+                             fill_price: Optional[float] = None,
+                             contracts: Optional[float] = None,
+                             reject_reason: Optional[str] = None) -> None:
+        payload: Dict[str, Any] = {
+            "status": status,
+            "run_id": self.run_id,
+            "position_id": position_id,
+            "fill_price": fill_price,
+            "contracts": contracts,
+            "reject_reason": reject_reason,
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._patch("manual_orders", payload, {"id": "eq.%d" % int(order_id)})
 
     def finish_run(self, cash: float, status: str = "stopped") -> None:
         if self.run_id is None:

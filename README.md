@@ -147,6 +147,41 @@ effect.
 
 ---
 
+## Trade panel — manual paper trading
+
+The dashboard has a **Trade** tab that clones Delta's Predict panel: strike and
+expiry selectors, a 15m candle chart with the strike drawn on it, the YES/NO
+buttons with live prices, dollar-denominated investment presets and a slippage
+tolerance control.
+
+Sizing matches the app exactly:
+
+```
+contracts = round(investment / price)      # $25 at 0.036 -> 694 contracts
+invested  = contracts x price              # $24.98
+payout    = contracts x 1.00               # $694.00
+```
+
+**Clicking YES or NO does not create a position in the browser.** The dashboard
+holds the anon key and RLS makes it read-only, and more importantly a fill
+invented client-side would bypass the order-book slippage model that makes these
+results worth anything. Instead the click queues a `pending` row in
+`manual_orders`, and the worker:
+
+1. re-prices the contract against **real L2 depth**,
+2. rejects the order if the fill drifted past your slippage tolerance,
+3. opens the position through the same code path as a bot entry.
+
+Rejections come back to the panel with a reason (`slippage $0.0812 exceeds
+tolerance $0.05`, `insufficient depth`, `market no longer live`).
+
+Manual trades are recorded with `role: manual`, so the reports keep them
+distinguishable from the strategy's own wings.
+
+> Requires `supabase/migrations/002_manual_orders.sql` to be run once.
+
+---
+
 ## The strategy, and where it was ambiguous
 
 Your original note:

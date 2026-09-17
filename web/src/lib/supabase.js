@@ -56,6 +56,39 @@ export async function fetchLatestSnapshot(runId) {
   return data?.[0] ?? null
 }
 
+/**
+ * Queue a paper trade. The browser deliberately cannot create a position:
+ * RLS allows only a `pending` row with no execution fields, and the worker
+ * fills it against the real order book. That keeps a manual paper trade
+ * exactly as honest about slippage as a bot entry.
+ */
+export async function placeManualOrder(order) {
+  const { data, error } = await supabase
+    .from('manual_orders')
+    .insert({
+      symbol: order.symbol,
+      round_id: order.roundId,
+      outcome: order.outcome,
+      strike: order.strike,
+      investment: order.investment,
+      slippage_tolerance: order.slippageTolerance,
+      quoted_price: order.quotedPrice,
+    })
+    .select()
+  if (error) throw error
+  return data?.[0] ?? null
+}
+
+export async function fetchManualOrders(limit = 20) {
+  const { data, error } = await supabase
+    .from('manual_orders')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return data ?? []
+}
+
 export async function fetchEvents(runId, limit = 60) {
   const { data, error } = await supabase
     .from('events')

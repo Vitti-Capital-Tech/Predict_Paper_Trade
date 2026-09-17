@@ -14,6 +14,7 @@ import RoundCard from './components/RoundCard'
 import PositionsTable from './components/PositionsTable'
 import EquityCurve from './components/EquityCurve'
 import EventFeed from './components/EventFeed'
+import TradePanel from './components/TradePanel'
 
 function Setup() {
   return (
@@ -48,6 +49,9 @@ export default function App() {
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
   const [now, setNow] = useState(Date.now())
+  const [view, setView] = useState(
+    () => (new URLSearchParams(window.location.search).get('view') === 'trade'
+      ? 'trade' : 'dashboard'))
   const runIdRef = useRef(null)
 
   // Ticking clock so countdowns advance between snapshots.
@@ -150,7 +154,7 @@ export default function App() {
   const closedPositions = useMemo(
     () => positions.filter((p) => p.status !== 'open'), [positions])
 
-  if (!isConfigured && !DEMO) return <Setup />
+  if (!isConfigured && !DEMO && view !== 'trade') return <Setup />
 
   const heartbeatAge = run?.last_heartbeat
     ? (now - new Date(run.last_heartbeat).getTime()) / 1000
@@ -182,6 +186,21 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            <div className="flex rounded-lg border border-white/10 bg-ink-800 p-0.5">
+              {[['dashboard', 'Dashboard'], ['trade', 'Trade']].map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setView(key)}
+                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                    view === key
+                      ? 'bg-sky-500/15 text-sky-300'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             {heartbeatAge !== null && (
               <span className="nums hidden text-xs text-slate-500 sm:inline">
                 worker {Math.round(heartbeatAge)}s ago
@@ -212,15 +231,17 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:py-6">
-        {error && (
+        {view === 'trade' && <TradePanel cash={run?.cash} />}
+
+        {view === 'dashboard' && error && (
           <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
             {error}
           </div>
         )}
 
-        {loading && !run && <Empty>Loading…</Empty>}
+        {view === 'dashboard' && loading && !run && <Empty>Loading…</Empty>}
 
-        {!loading && !run && (
+        {view === 'dashboard' && !loading && !run && (
           <Card title="No runs found">
             <p className="text-sm text-slate-400">
               The schema is connected but no worker has registered a run yet. Start
@@ -233,7 +254,7 @@ export default function App() {
           </Card>
         )}
 
-        {run && (
+        {view === 'dashboard' && run && (
           <>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <Kpi
