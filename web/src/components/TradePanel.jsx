@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchBinaryTickers, fetchCandles, fetchSpotTicker,
-  buildRounds, legFor, sizeOrder,
+  buildRounds, legFor, sizeOrder, availableAssets, spotSymbolFor,
+  RESOLUTIONS, lookbackHoursFor,
 } from '../lib/delta'
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
 import CandleChart from './CandleChart'
+import Dropdown from './Dropdown'
 
 const PRESETS = [5, 25, 50]
 const SLIPPAGE_OPTIONS = [0.01, 0.02, 0.05, 0.1, 0.25]
@@ -31,34 +33,6 @@ function expiryLabel(date) {
     hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase()}`
 }
 
-function Select({ value, onChange, options, className = '' }) {
-  return (
-    <div className={`relative ${className}`}>
-      <select
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full appearance-none rounded-lg border border-white/10 bg-ink-800
-                   py-2 pl-3 pr-8 text-sm text-slate-200 outline-none
-                   focus:border-sky-500/50"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-      <Caret className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2" />
-    </div>
-  )
-}
-
-function Caret({ className = 'h-3.5 w-3.5 text-slate-400' }) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" className={className}>
-      <path d="M5 7.5 10 12.5 15 7.5" stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 function LineIcon() {
   return (
     <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5">
@@ -79,6 +53,9 @@ function CandleIcon() {
 }
 
 export default function TradePanel({ account, workerLive }) {
+  const [assets, setAssets] = useState(['BTC'])
+  const [asset, setAsset] = useState('BTC')
+  const [resolution, setResolution] = useState('15m')
   const [rounds, setRounds] = useState([])
   const [spotTicker, setSpotTicker] = useState(null)
   const [error, setError] = useState(null)
@@ -101,9 +78,11 @@ export default function TradePanel({ account, workerLive }) {
     try {
       const [tickers, spotT] = await Promise.all([
         fetchBinaryTickers(),
-        fetchSpotTicker('BTCUSDT').catch(() => null),
+        fetchSpotTicker(spotSymbolFor(asset)).catch(() => null),
       ])
-      const built = buildRounds(tickers, 'BTC')
+      const found = availableAssets(tickers)
+      if (found.length) setAssets(found)
+      const built = buildRounds(tickers, asset)
       setRounds(built)
       if (spotT) setSpotTicker(spotT)
       setError(null)
@@ -113,7 +92,7 @@ export default function TradePanel({ account, workerLive }) {
     } catch (e) {
       setError(e.message ?? String(e))
     }
-  }, [])
+  }, [asset])
 
   useEffect(() => {
     poll()
@@ -126,15 +105,25 @@ export default function TradePanel({ account, workerLive }) {
     return () => clearInterval(t)
   }, [])
 
+  // A different underlying has different strikes and expiries.
+  useEffect(() => {
+    touched.current = false
+    setExpiryCode(null)
+    setStrike(null)
+    setSpotTicker(null)
+  }, [asset])
+
   useEffect(() => {
     let alive = true
-    const load = () => fetchCandles('BTCUSDT', '15m', 8)
+    setCandles([])
+    const load = () => fetchCandles(
+      spotSymbolFor(asset), resolution, lookbackHoursFor(resolution))
       .then((c) => alive && setCandles(c))
       .catch(() => {})
     load()
     const t = setInterval(load, 20000)
     return () => { alive = false; clearInterval(t) }
-  }, [])
+  }, [asset, resolution])
 
   // Poll queued orders, but stop entirely once the table turns out to be
   // missing — otherwise an un-run migration means a 404 every 3 seconds.
@@ -239,8 +228,7 @@ export default function TradePanel({ account, workerLive }) {
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl
                       border border-white/10 bg-ink-900 px-4 py-3">
         <div className="flex items-center gap-2">
-          <span className="text-base font-semibold text-slate-200">BTC</span>
-          <Caret />
+          <span className="text-base font-semibold text-slate-200">{asset}</span>
           <button
             type="button"
             title="Binary market: each contract pays $1 if the condition is true at settlement, $0 otherwise."
@@ -279,22 +267,28 @@ export default function TradePanel({ account, workerLive }) {
         <div className="overflow-hidden rounded-xl border border-white/10 bg-ink-900">
           {/* Market selectors */}
           <div className="flex flex-wrap items-center gap-2 border-b border-white/5 px-4 py-3">
-            <Select value="BTC" onChange={() => {}}
-                    options={[{ value: 'BTC', label: 'BTC' }]}
-                    className="w-24 shrink-0" />
-            <Select
+            <Dropdown
+              ariaLabel="Underlying"
+              value={asset}
+              onChange={(v) => setAsset(v)}
+              options={assets.map((a) => ({ value: a, label: a }))}
+              className="w-28 shrink-0"
+            />
+            <Dropdown
+              ariaLabel="Threshold"
               value={strike ?? ''}
               onChange={(v) => { touched.current = true; setStrike(Number(v)) }}
               options={(round?.strikes ?? []).map((s) => ({
                 value: s, label: `Above ${s.toLocaleString('en-US')}` }))}
-              className="min-w-[150px] flex-1"
+              className="min-w-[160px] flex-1"
             />
-            <Select
+            <Dropdown
+              ariaLabel="Expiry"
               value={expiryCode ?? ''}
               onChange={(v) => { touched.current = true; setExpiryCode(v) }}
               options={rounds.map((r) => ({
                 value: r.expiryCode, label: expiryLabel(r.expiry) }))}
-              className="min-w-[130px] flex-1"
+              className="min-w-[140px] flex-1"
             />
           </div>
 
@@ -336,7 +330,14 @@ export default function TradePanel({ account, workerLive }) {
                   </button>
                 ))}
               </div>
-              <span className="text-xs font-medium text-sky-400">15m</span>
+              <Dropdown
+                ariaLabel="Chart timeframe"
+                size="sm"
+                value={resolution}
+                onChange={setResolution}
+                options={RESOLUTIONS.map((r) => ({ value: r, label: r }))}
+                className="w-20"
+              />
             </div>
 
             <div className="flex items-center gap-3">
@@ -426,11 +427,13 @@ export default function TradePanel({ account, workerLive }) {
 
             <div className="mt-3 flex items-center justify-between">
               <span className="text-xs font-medium text-slate-300">Slippage Tolerance</span>
-              <Select
+              <Dropdown
+                ariaLabel="Slippage tolerance"
                 value={slippage}
                 onChange={(v) => setSlippage(Number(v))}
                 options={SLIPPAGE_OPTIONS.map((s) => ({ value: s, label: `$${s.toFixed(2)}` }))}
                 className="w-28"
+                align="right"
               />
             </div>
 

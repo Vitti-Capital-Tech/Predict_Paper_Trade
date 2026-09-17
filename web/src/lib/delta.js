@@ -122,6 +122,35 @@ export function buildRounds(tickers, asset = 'BTC') {
     .sort((a, b) => a.expiry - b.expiry)
 }
 
+/**
+ * Which underlyings actually have live Predict markets right now.
+ * Delta lists BTC and ETH today; reading it from the feed means a third
+ * asset appears on its own rather than needing a code change.
+ */
+export function availableAssets(tickers) {
+  const seen = new Set()
+  for (const t of tickers ?? []) {
+    const p = parseSymbol(t.symbol)
+    if (p) seen.add(p.asset)
+  }
+  return [...seen].sort()
+}
+
+/** Spot series for an underlying, used for the header quote and the chart. */
+export function spotSymbolFor(asset) {
+  return `${asset}USDT`
+}
+
+/** Candle resolutions the venue serves — all verified against the API. */
+export const RESOLUTIONS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1d']
+
+/** Hours of history to request so a timeframe shows a sensible number of bars. */
+export function lookbackHoursFor(resolution) {
+  const minutes = { '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+                    '1h': 60, '2h': 120, '4h': 240, '1d': 1440 }[resolution] ?? 15
+  return Math.max(1, Math.ceil((minutes * 60) / 60))  // ~60 bars
+}
+
 export function legFor(round, strike, side) {
   return round?.legs.find((l) => l.strike === strike && l.side === side) ?? null
 }
