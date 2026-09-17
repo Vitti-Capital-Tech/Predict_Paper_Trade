@@ -43,6 +43,10 @@ class TimingConfig:
     """
     min_seconds_since_launch: float = 30.0
     max_seconds_since_launch: float = 900.0
+    # Delta halts trading for the final minute of a round: positions can be
+    # neither opened nor closed inside this window. Modelling it matters -
+    # without it the paper book fills at moments the venue would refuse.
+    trading_halt_sec: float = 60.0
     min_seconds_to_expiry: float = 180.0
     max_seconds_to_expiry: float = 1800.0
     # "HH:MM-HH:MM" windows; empty list = all hours allowed.

@@ -26,6 +26,9 @@ atr:
 # "Give a filter for timings"
 # Two axes: position inside the round, and wall-clock session.
 timing:
+  # Delta halts trading for the final minute of a round - positions can be
+  # neither opened nor closed. Enforced as a hard floor on entries and exits.
+  trading_halt_sec: 60.0
   min_seconds_since_launch: 30.0    # let the book settle after a round lists
   max_seconds_since_launch: 900.0
   min_seconds_to_expiry: 180.0      # no entries in the last 3 minutes

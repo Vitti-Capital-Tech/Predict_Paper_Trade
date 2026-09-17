@@ -49,6 +49,7 @@ class Engine:
         # Last spot seen per symbol, so a settled position can report the
         # underlying price that produced its outcome.
         self._last_spot: Dict[str, float] = {}
+        self._halt_logged: set = set()
 
     # ---- data -----------------------------------------------------------
     def _refresh_products(self, now_ts: float) -> List[Dict]:
@@ -90,9 +91,24 @@ class Engine:
             contract = by_symbol.get(pos.symbol)
             if contract is None:
                 continue
+            # Trading halts before expiry, so a position that has not exited by
+            # then is carried into settlement whether we like it or not.
+            expiry = self._expiry_by_symbol.get(pos.symbol)
+            if expiry is not None:
+                tte = (expiry - now).total_seconds()
+                if tte <= self.cfg.timing.trading_halt_sec:
+                    if pos.symbol not in self._halt_logged:
+                        self._halt_logged.add(pos.symbol)
+                        log.info("HALT   %-28s %.0fs to expiry - holding to settlement",
+                                 pos.symbol, tte)
+                    continue
+
             spot = contract.spot_price
             should, reason = self.strategy.should_exit(pos, contract, spot)
 
+            # A flatten scheduled inside the halt window can never execute; the
+            # branch above has already skipped those, so this only fires while
+            # trading is still open.
             if not should and self.cfg.exit.flatten_before_expiry_sec is not None:
                 rnd_expiry = self._expiry_by_symbol.get(pos.symbol)
                 if rnd_expiry is not None:
@@ -215,6 +231,18 @@ class Engine:
                     reject_reason="market no longer live (expired or delisted)")
                 log.info("MANUAL rejected %s: not live", symbol)
                 continue
+
+            expiry = self._expiry_by_symbol.get(symbol)
+            if expiry is not None:
+                tte = (expiry - now).total_seconds()
+                if tte <= self.cfg.timing.trading_halt_sec:
+                    self.store.resolve_manual_order(
+                        oid, "rejected",
+                        reject_reason="trading halted for the final %.0fs "
+                                      "(%.0fs to expiry)"
+                                      % (self.cfg.timing.trading_halt_sec, tte))
+                    log.info("MANUAL rejected %s: trading halted", symbol)
+                    continue
 
             if self.portfolio.position_for(symbol) is not None:
                 self.store.resolve_manual_order(

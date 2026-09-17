@@ -7,9 +7,14 @@ import {
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
 import CandleChart from './CandleChart'
 import Dropdown from './Dropdown'
+import RulesModal from './RulesModal'
 
 const PRESETS = [5, 25, 50]
 const SLIPPAGE_OPTIONS = [0.01, 0.02, 0.05, 0.1, 0.25]
+
+// Delta halts trading for the final minute of a round. The worker enforces
+// the same window, so the button must not offer what would be refused.
+const TRADING_HALT_SEC = 60
 
 const money = (v, d = 2) =>
   `$${Number(v ?? 0).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })}`
@@ -71,6 +76,7 @@ export default function TradePanel({ account, workerLive }) {
   const [orders, setOrders] = useState([])
   const [ordersOffline, setOrdersOffline] = useState(false)
   const [toast, setToast] = useState(null)
+  const [rulesOpen, setRulesOpen] = useState(false)
   const touched = useRef(false)
 
   // Live quotes straight from Delta.
@@ -167,6 +173,8 @@ export default function TradePanel({ account, workerLive }) {
 
   const secondsLeft = round?.expiry ? (round.expiry.getTime() - now) / 1000 : null
   const expired = secondsLeft !== null && secondsLeft <= 0
+  const halted = secondsLeft !== null && secondsLeft > 0
+    && secondsLeft <= TRADING_HALT_SEC
   const nextLiveRound = rounds.find((r) => r.expiry && r.expiry.getTime() > now) ?? null
 
   const yesSize = sizeOrder(investment, yesLeg?.ask)
@@ -182,7 +190,7 @@ export default function TradePanel({ account, workerLive }) {
   async function submit(outcome) {
     const leg = outcome === 'yes' ? yesLeg : noLeg
     const size = outcome === 'yes' ? yesSize : noSize
-    if (!leg || !leg.ask || expired || size.contracts < 1) return
+    if (!leg || !leg.ask || expired || halted || size.contracts < 1) return
     if (account && size.invested > Number(account.balance)) {
       setToast({ kind: 'err',
                  msg: `Not enough balance: needs ${money(size.invested)}, have ${money(account.balance)}.` })
@@ -224,6 +232,13 @@ export default function TradePanel({ account, workerLive }) {
 
   return (
     <div className="space-y-4">
+      <RulesModal
+        open={rulesOpen}
+        onClose={() => setRulesOpen(false)}
+        asset={asset}
+        haltSeconds={TRADING_HALT_SEC}
+      />
+
       {/* Market header — full width */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl
                       border border-white/10 bg-ink-900 px-4 py-3">
@@ -231,7 +246,9 @@ export default function TradePanel({ account, workerLive }) {
           <span className="text-base font-semibold text-slate-200">{asset}</span>
           <button
             type="button"
-            title="Binary market: each contract pays $1 if the condition is true at settlement, $0 otherwise."
+            onClick={() => setRulesOpen(true)}
+            aria-label="Rules and settlement"
+            title="Rules & settlement"
             className="ml-1 text-sky-400/80 transition-colors hover:text-sky-300"
           >
             <svg viewBox="0 0 20 20" className="h-4.5 w-4.5" fill="none">
@@ -294,7 +311,11 @@ export default function TradePanel({ account, workerLive }) {
 
           {/* Status strip */}
           <div className="flex items-center justify-center gap-2 bg-ink-800 py-2 text-xs text-slate-300">
-            {expired ? (
+            {halted ? (
+              <span className="nums text-amber-400">
+                ⏸ Trading paused for the final minute · settles in {clock(secondsLeft)}
+              </span>
+            ) : expired ? (
               <>
                 <span>🕐 Contract Expired</span>
                 {nextLiveRound && (
@@ -442,7 +463,8 @@ export default function TradePanel({ account, workerLive }) {
                 <div key={key}>
                   <button
                     onClick={() => submit(key)}
-                    disabled={expired || !round || !leg?.ask || placing !== null || size.contracts < 1}
+                    disabled={expired || halted || !round || !leg?.ask
+                              || placing !== null || size.contracts < 1}
                     className={`w-full rounded-lg border py-3 text-center transition-colors
                                 disabled:cursor-not-allowed disabled:opacity-40 ${btn}`}
                   >

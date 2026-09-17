@@ -85,6 +85,10 @@ class Strategy:
             return False, "outside session windows (%s)" % t.session_timezone
 
         tte = rnd.seconds_to_expiry(now)
+        # Hard floor: the venue will not accept an order in the halt window,
+        # whatever min_seconds_to_expiry is configured to.
+        if tte <= t.trading_halt_sec:
+            return False, "trading halted for the final %.0fs" % t.trading_halt_sec
         if tte < t.min_seconds_to_expiry:
             return False, "too close to expiry (%.0fs < %.0fs)" % (tte, t.min_seconds_to_expiry)
         if tte > t.max_seconds_to_expiry:
