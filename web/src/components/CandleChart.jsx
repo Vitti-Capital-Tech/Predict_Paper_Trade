@@ -26,6 +26,7 @@ const COLORS = {
   last: '#2f86eb',
   target: '#2f86eb',
   targetRule: '#8290a6',
+  grid: '#1b2534',
   twap: '#f0b90b',
   up: '#26a69a',
   down: '#ef5350',
@@ -92,7 +93,9 @@ export default function CandleChart({
     const plotW = W - AXIS_W
     const plotH = H - TIME_H - PAD_B
     const step = plotW / rows.length
-    const bodyW = Math.max(1.5, Math.min(11, step * 0.6))
+    // Delta's bodies are slim with a clear gap between them; filling the
+    // slot turned a sparse window into a row of slabs.
+    const bodyW = Math.max(1.5, Math.min(7, step * 0.45))
 
     const y = (v) => PAD_T + ((max - v) / (max - min)) * (plotH - PAD_T)
     const x = (i) => i * step + step / 2
@@ -165,12 +168,12 @@ export default function CandleChart({
     setHover(Math.max(0, Math.min(rows.length - 1, Math.floor(px / step))))
   }
 
+  const tickEvery = Math.max(1, Math.ceil(rows.length / 6))
+
   const linePath = rows
     .map((c, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(c.close)}`).join(' ')
   const twapPath = twap
     .map((t, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(t.value)}`).join(' ')
-
-  const tickEvery = Math.max(1, Math.ceil(rows.length / 6))
 
   return (
     <svg
@@ -186,18 +189,33 @@ export default function CandleChart({
       {chartType === 'candles' && (
         <text x={4} y={13} fontSize="10.5" fill={legendColor}
               fontFamily="ui-monospace, monospace">
-          {tagPrice(active.close)} {chg >= 0 ? '+' : '-'}
+          ${active.close.toFixed(2)} {chg >= 0 ? '+' : '-'}
           {Math.abs(chg).toFixed(2)} ({chgPct >= 0 ? '+' : '−'}
           {Math.abs(chgPct).toFixed(2)}%)
         </text>
       )}
 
-      {/* Price axis — labels only, no gridlines */}
+      {/* Price axis. The candle view carries faint gridlines, as the app does;
+          the line view stays clean. */}
       {ticks.map((v) => (
-        <text key={v} x={W - 6} y={y(v) + 3.5} fill={COLORS.axis} fontSize="10"
-              textAnchor="end" fontFamily="ui-monospace, monospace">
-          {axisPrice(v)}
-        </text>
+        <g key={v}>
+          {chartType === 'candles' && (
+            <line x1={0} x2={plotW} y1={y(v)} y2={y(v)}
+                  stroke={COLORS.grid} strokeWidth="1" />
+          )}
+          <text x={W - 6} y={y(v) + 3.5} fill={COLORS.axis} fontSize="10"
+                textAnchor="end" fontFamily="ui-monospace, monospace">
+            {axisPrice(v)}
+          </text>
+        </g>
+      ))}
+
+      {/* Vertical gridlines on the time ticks */}
+      {chartType === 'candles' && rows.map((c, i) => (
+        i % tickEvery === 0 && i > 0 && i < rows.length - 1 ? (
+          <line key={`v${c.time}`} x1={x(i)} x2={x(i)} y1={0} y2={plotH}
+                stroke={COLORS.grid} strokeWidth="1" strokeDasharray="2 4" />
+        ) : null
       ))}
 
       {/* Target line + pill */}

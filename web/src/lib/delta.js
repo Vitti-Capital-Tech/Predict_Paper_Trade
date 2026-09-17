@@ -164,10 +164,25 @@ export const RESOLUTIONS = ['5m', '15m', '30m', '1h', '4h', '1d']
 
 const WINDOW_MINUTES = { '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, '1d': 1440 }
 
-/** Bar size to draw a given window with. */
+/**
+ * Bar size for a window — the finest that keeps the request sane, so the plot
+ * is as dense as the venue allows.
+ *
+ * The API floor is one minute, so a 5m or 15m window can only ever hold 5 or
+ * 15 bars. Delta's own app draws those windows from tick data it has and the
+ * public API does not, which is why its short views look denser than this one.
+ * Longer windows match it.
+ */
 export function barResolutionFor(window) {
   return { '5m': '1m', '15m': '1m', '30m': '1m',
-           '1h': '3m', '4h': '5m', '1d': '15m' }[window] ?? '1m'
+           '1h': '1m', '4h': '3m', '1d': '15m' }[window] ?? '1m'
+}
+
+/** Roughly how many bars a window yields, for sizing decisions. */
+export function barCountFor(window) {
+  const mins = { '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, '1d': 1440 }[window] ?? 30
+  const bar = { '1m': 1, '3m': 3, '15m': 15 }[barResolutionFor(window)] ?? 1
+  return Math.round(mins / bar)
 }
 
 /** Hours of history to request for a window. */
