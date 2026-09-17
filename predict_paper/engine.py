@@ -46,6 +46,9 @@ class Engine:
         self._seen_rounds: set = set()
         self._logged_rejects: set = set()
         self._expiry_by_symbol: Dict[str, datetime] = {}
+        # Last spot seen per symbol, so a settled position can report the
+        # underlying price that produced its outcome.
+        self._last_spot: Dict[str, float] = {}
 
     # ---- data -----------------------------------------------------------
     def _refresh_products(self, now_ts: float) -> List[Dict]:
@@ -78,7 +81,8 @@ class Engine:
             if price is None:
                 log.debug("settlement for %s not published yet", pos.symbol)
                 continue
-            self.portfolio.settle_position(pos, price, now)
+            self.portfolio.settle_position(
+                pos, price, now, self._last_spot.get(pos.symbol))
 
     # ---- exits ----------------------------------------------------------
     def manage_exits(self, by_symbol: Dict[str, Contract], now: datetime) -> None:
@@ -292,6 +296,8 @@ class Engine:
             for c in rnd.contracts:
                 by_symbol[c.symbol] = c
                 self._expiry_by_symbol[c.symbol] = rnd.expiry
+                if c.spot_price is not None:
+                    self._last_spot[c.symbol] = c.spot_price
 
         self.settle_expired(set(by_symbol), now)
         self.manage_exits(by_symbol, now)

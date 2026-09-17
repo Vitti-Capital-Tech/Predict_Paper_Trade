@@ -149,10 +149,15 @@ effect.
 
 ## Trade panel — manual paper trading
 
-The dashboard has a **Trade** tab that clones Delta's Predict panel: strike and
-expiry selectors, a 15m candle chart with the strike drawn on it, the YES/NO
+The web app is the Predict panel: strike and expiry selectors, a 15m candle
+chart with the strike drawn on it and an optional TWAP overlay, the YES/NO
 buttons with live prices, dollar-denominated investment presets and a slippage
-tolerance control.
+tolerance control — with **Positions** and **Recent Trades** tabs underneath,
+laid out like Delta's portfolio cards.
+
+Quotes and candles come straight from Delta (its API sends permissive CORS
+headers), so the panel is as fresh as the app rather than lagging the worker's
+snapshot.
 
 Sizing matches the app exactly:
 

@@ -42,6 +42,9 @@ class Position:
     exit_reason: str = ""
     exit_slippage: float = 0.0
     fees: float = 0.0
+    # Underlying price when the position settled (approximate - see
+    # migration 003). None for positions closed before expiry.
+    settlement_spot: Optional[float] = None
 
     @property
     def cost(self) -> float:
@@ -167,7 +170,9 @@ class Portfolio:
         self._finish(pos, "exit")
 
     def settle_position(self, pos: Position, settlement_price: float,
-                        now: datetime) -> None:
+                        now: datetime,
+                        settlement_spot: Optional[float] = None) -> None:
+        pos.settlement_spot = settlement_spot
         pos.exit_price = settlement_price
         pos.exit_time = now.isoformat()
         pos.exit_reason = "settled %s" % ("ITM" if settlement_price >= 0.5 else "OTM")

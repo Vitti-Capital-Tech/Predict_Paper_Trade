@@ -52,6 +52,8 @@ class SupabaseStore:
         self.run_id: Optional[int] = None
         self._lock = threading.Lock()
         self._failures = 0
+        self._last_error = ""
+        self._missing_columns: set = set()
         self.session = requests.Session()
         self.session.headers.update({
             "apikey": service_key,
@@ -71,6 +73,7 @@ class SupabaseStore:
                 self._note_failure("%s -> %s %s" % (table, r.status_code, r.text[:200]))
                 return None
             self._failures = 0
+            self._last_error = ""
             if "return=representation" in prefer and r.content:
                 return r.json()
             return []
@@ -91,6 +94,7 @@ class SupabaseStore:
             self._note_failure("%s patch -> %s" % (table, exc))
 
     def _note_failure(self, msg: str) -> None:
+        self._last_error = msg
         self._failures += 1
         # Warn on the first few, then go quiet so a long outage cannot flood the log.
         if self._failures <= 3 or self._failures % 50 == 0:
@@ -136,11 +140,29 @@ class SupabaseStore:
             "exit_reason": pos.get("exit_reason"),
             "exit_slippage": pos.get("exit_slippage") or 0,
             "fees": pos.get("fees") or 0,
+            "settlement_spot": pos.get("settlement_spot"),
         }
+        # Columns added by later migrations. If the migration has not been run,
+        # PostgREST rejects the whole row, which would silently stop recording
+        # positions - so drop the column once and carry on.
+        for col in list(self._missing_columns):
+            row.pop(col, None)
+
         with self._lock:
-            self._post("positions", row,
-                       prefer="resolution=merge-duplicates,return=minimal",
-                       params={"on_conflict": "run_id,position_id"})
+            ok = self._post("positions", row,
+                            prefer="resolution=merge-duplicates,return=minimal",
+                            params={"on_conflict": "run_id,position_id"})
+            if ok is None and self._last_error:
+                for col in ("settlement_spot",):
+                    if col in row and col in self._last_error:
+                        log.warning("column '%s' missing in Supabase - run the "
+                                    "matching migration; continuing without it", col)
+                        self._missing_columns.add(col)
+                        row.pop(col, None)
+                        self._post("positions", row,
+                                   prefer="resolution=merge-duplicates,return=minimal",
+                                   params={"on_conflict": "run_id,position_id"})
+                        break
 
     def log_event(self, kind: str, round_id: Optional[str] = None,
                   symbol: Optional[str] = None, reason: Optional[str] = None,
