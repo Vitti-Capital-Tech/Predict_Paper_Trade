@@ -161,6 +161,11 @@ export default function CandleChart({
   const twapTagY = tagY.twap ?? null
   const targetTagY = tagY.target ?? null
 
+  // An axis label sitting behind a tag renders as a smear. Drop any tick the
+  // tags already cover — the tag states that price more precisely anyway.
+  const occupied = tagSlots.map((t) => t.y)
+  const isCovered = (py) => occupied.some((oy) => Math.abs(oy - py) < 10)
+
   function onMove(e) {
     const rect = svgRef.current.getBoundingClientRect()
     const px = ((e.clientX - rect.left) / rect.width) * W
@@ -203,10 +208,12 @@ export default function CandleChart({
             <line x1={0} x2={plotW} y1={y(v)} y2={y(v)}
                   stroke={COLORS.grid} strokeWidth="1" />
           )}
-          <text x={W - 6} y={y(v) + 3.5} fill={COLORS.axis} fontSize="10"
-                textAnchor="end" fontFamily="ui-monospace, monospace">
-            {axisPrice(v)}
-          </text>
+          {!isCovered(y(v)) && (
+            <text x={W - 6} y={y(v) + 3.5} fill={COLORS.axis} fontSize="10"
+                  textAnchor="end" fontFamily="ui-monospace, monospace">
+              {axisPrice(v)}
+            </text>
+          )}
         </g>
       ))}
 
@@ -260,10 +267,16 @@ export default function CandleChart({
               vectorEffect="non-scaling-stroke" />
       )}
 
-      {/* Right-axis tags */}
+      {/* Right-axis tags.
+          The target is blue *text*, not a filled badge: Delta badges only the
+          live price, and giving both a solid blue pill made two different
+          things read as the same thing. */}
       {targetTagY !== null && (
-        <Tag x={plotW + 4} y={targetTagY} width={AXIS_W - 10}
-             text={tagPrice(strike)} fill={COLORS.target} />
+        <text x={W - 6} y={targetTagY + 3.5} fill={COLORS.target} fontSize="10.5"
+              fontWeight="600" textAnchor="end"
+              fontFamily="ui-monospace, monospace">
+          {tagPrice(strike)}
+        </text>
       )}
       {twapTagY !== null && lastTwap !== null && (
         <Tag x={plotW + 4} y={twapTagY} width={AXIS_W - 10}
