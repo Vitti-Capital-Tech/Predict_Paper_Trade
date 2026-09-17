@@ -21,6 +21,24 @@ export function fetchBinaryTickers() {
   return get('/v2/tickers', { contract_types: BINARY_TYPES })
 }
 
+/**
+ * Underlying ticker — carries spot and the 24h change the panel header shows.
+ * The binary tickers expose `spot_price` but not the underlying's 24h move.
+ */
+export async function fetchSpotTicker(symbol = 'BTCUSDT') {
+  const t = await get(`/v2/tickers/${symbol}`)
+  if (!t) return null
+  return {
+    symbol: t.symbol,
+    spot: Number(t.spot_price ?? t.close),
+    last: Number(t.close),
+    changePct: Number(t.mark_change_24h ?? t.ltp_change_24h ?? 0),
+    high24h: Number(t.high),
+    low24h: Number(t.low),
+    turnover: Number(t.turnover ?? 0),
+  }
+}
+
 export async function fetchCandles(symbol = 'BTCUSDT', resolution = '15m', hours = 6) {
   const end = Math.floor(Date.now() / 1000)
   const start = end - hours * 3600
@@ -77,6 +95,11 @@ export function buildRounds(tickers, asset = 'BTC') {
       askSize: num(q.ask_size),
       mark: num(t.mark_price),
       spot: num(t.spot_price),
+      // The public tickers expose no traded-volume field for binaries. On a
+      // 15-minute contract that listed ~20 minutes ago there is no prior book,
+      // so open interest is effectively the volume traded this round.
+      oiUsd: num(t.oi_value_usd) ?? 0,
+      oiContracts: num(t.oi_contracts) ?? 0,
     }
 
     if (!byExpiry.has(p.expiryCode)) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchBinaryTickers, fetchCandles, buildRounds, legFor, sizeOrder } from '../lib/delta'
+import { fetchBinaryTickers, fetchCandles, fetchSpotTicker, buildRounds, legFor, sizeOrder } from '../lib/delta'
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
 import CandleChart from './CandleChart'
 
@@ -25,7 +25,7 @@ function clock(secs) {
 function expiryLabel(date) {
   if (!date) return '—'
   return `At ${date.toLocaleTimeString('en-US', {
-    hour: 'numeric', minute: '2-digit', hour12: true })}`
+    hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase()}`
 }
 
 function Select({ value, onChange, options, className = '' }) {
@@ -51,6 +51,35 @@ function Select({ value, onChange, options, className = '' }) {
   )
 }
 
+function Caret() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5 text-slate-400">
+      <path d="M5 7.5 10 12.5 15 7.5" stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function LineIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5">
+      <path d="M1 11.5 5 6.5l3 2.5 6-7" stroke="currentColor" strokeWidth="1.5"
+            strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function CandleIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5">
+      <path d="M5 2v12M11 2v12" stroke="currentColor" strokeWidth="1.3"
+            strokeLinecap="round" />
+      <rect x="3.2" y="4.5" width="3.6" height="6" rx="0.6" fill="currentColor" />
+      <rect x="9.2" y="6.5" width="3.6" height="5" rx="0.6" fill="currentColor" />
+    </svg>
+  )
+}
+
 export default function TradePanel({ cash }) {
   const [rounds, setRounds] = useState([])
   const [error, setError] = useState(null)
@@ -63,13 +92,21 @@ export default function TradePanel({ cash }) {
   const [placing, setPlacing] = useState(null)
   const [orders, setOrders] = useState([])
   const [toast, setToast] = useState(null)
+  const [spotTicker, setSpotTicker] = useState(null)
+  const [chartType, setChartType] = useState('candles')
+  const [showTwap, setShowTwap] = useState(true)
   const touched = useRef(false)
 
   // Live quotes straight from Delta.
   const poll = useCallback(async () => {
     try {
-      const built = buildRounds(await fetchBinaryTickers(), 'BTC')
+      const [tickers, spotT] = await Promise.all([
+        fetchBinaryTickers(),
+        fetchSpotTicker('BTCUSDT').catch(() => null),
+      ])
+      const built = buildRounds(tickers, 'BTC')
       setRounds(built)
+      if (spotT) setSpotTicker(spotT)
       setError(null)
       if (!touched.current && built.length) {
         setExpiryCode((prev) => prev ?? built[0].expiryCode)
@@ -135,12 +172,14 @@ export default function TradePanel({ cash }) {
   const yesSize = sizeOrder(investment, yesLeg?.ask)
   const noSize = sizeOrder(investment, noLeg?.ask)
 
-  // Depth on each side, as a share of the two — the panel's YES/NO bar.
-  const yesDepth = Number(yesLeg?.askSize ?? 0)
-  const noDepth = Number(noLeg?.askSize ?? 0)
-  const yesShare = yesDepth + noDepth > 0 ? (yesDepth / (yesDepth + noDepth)) * 100 : 50
+  // The YES/NO bar: share of this round's traded interest on each side.
+  const yesVol = Number(yesLeg?.oiUsd ?? 0)
+  const noVol = Number(noLeg?.oiUsd ?? 0)
+  const yesShare = yesVol + noVol > 0 ? (yesVol / (yesVol + noVol)) * 100 : 50
 
-  const spot = round?.spot ?? null
+  const spot = spotTicker?.spot ?? round?.spot ?? null
+  const changeUp = (spotTicker?.changePct ?? 0) >= 0
+  const nextLiveRound = rounds.find((r) => r.expiry && r.expiry.getTime() > now) ?? null
 
   async function submit(outcome) {
     const leg = outcome === 'yes' ? yesLeg : noLeg
@@ -181,34 +220,66 @@ export default function TradePanel({ cash }) {
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-semibold italic text-sky-400">Predict</span>
             <span className="text-sm font-semibold text-slate-200">BTC</span>
+            <Caret />
           </div>
-          <span className="nums text-sm font-semibold text-emerald-400">
+          <span className={`nums text-sm font-semibold ${
+            changeUp ? 'text-emerald-400' : 'text-rose-400'}`}>
             {spot ? money(spot) : '—'}
+            {spotTicker && (
+              <span className="ml-1.5 font-normal">
+                {changeUp ? '↑' : '↓'} {Math.abs(spotTicker.changePct).toFixed(2)}%
+              </span>
+            )}
           </span>
         </div>
 
         {/* Market selectors */}
-        <div className="grid grid-cols-3 gap-2 px-4 py-3">
-          <Select value="BTC" onChange={() => {}} options={[{ value: 'BTC', label: 'BTC' }]} />
+        <div className="flex items-center gap-2 px-4 py-3">
+          <Select value="BTC" onChange={() => {}} options={[{ value: 'BTC', label: 'BTC' }]}
+                  className="w-24 shrink-0" />
           <Select
             value={strike ?? ''}
             onChange={(v) => { touched.current = true; setStrike(Number(v)) }}
             options={(round?.strikes ?? []).map((s) => ({
               value: s, label: `Above ${s.toLocaleString('en-US')}` }))}
+            className="flex-1"
           />
           <Select
             value={expiryCode ?? ''}
             onChange={(v) => { touched.current = true; setExpiryCode(v) }}
             options={rounds.map((r) => ({
               value: r.expiryCode, label: expiryLabel(r.expiry) }))}
+            className="flex-1"
           />
+          <button
+            type="button"
+            title="Binary market: pays $1 per contract if the condition is true at settlement."
+            className="shrink-0 text-sky-400/80 transition-colors hover:text-sky-300"
+          >
+            <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none">
+              <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M10 9v5M10 6.2v.1" stroke="currentColor" strokeWidth="1.8"
+                    strokeLinecap="round" />
+            </svg>
+          </button>
         </div>
 
         {/* Status strip */}
         <div className={`flex items-center justify-center gap-2 py-2 text-xs ${
           expired ? 'bg-ink-800 text-slate-400' : 'bg-ink-800 text-slate-300'}`}>
           {expired ? (
-            <span>⏱ Contract Expired</span>
+            <>
+              <span>🕐 Contract Expired</span>
+              {nextLiveRound && (
+                <button
+                  onClick={() => { touched.current = true
+                                   setExpiryCode(nextLiveRound.expiryCode) }}
+                  className="font-medium text-sky-400 hover:text-sky-300"
+                >
+                  Go to live contract →
+                </button>
+              )}
+            </>
           ) : (
             <span className="nums">⏳ Settles in {clock(secondsLeft)}</span>
           )}
@@ -216,13 +287,45 @@ export default function TradePanel({ cash }) {
 
         {/* Chart */}
         <div className="border-b border-white/5 px-2 pb-2 pt-3">
-          <div className="mb-1 flex items-center justify-between px-2">
-            <span className="text-xs font-medium text-sky-400">15m</span>
-            <span className="nums text-xs text-slate-500">
+          <div className="flex items-center justify-between px-2">
+            <div className="flex gap-1">
+              {[['line', LineIcon], ['candles', CandleIcon]].map(([key, Icon]) => (
+                <button
+                  key={key}
+                  onClick={() => setChartType(key)}
+                  title={key === 'line' ? 'Line' : 'Candlesticks'}
+                  className={`rounded border p-1 transition-colors ${
+                    chartType === key
+                      ? 'border-sky-500/50 bg-sky-500/10 text-sky-300'
+                      : 'border-white/10 text-slate-500 hover:text-slate-300'}`}
+                >
+                  <Icon />
+                </button>
+              ))}
+            </div>
+            <span className="nums text-xs text-slate-400">
               ⧗ {expired ? '00:00' : clock(secondsLeft)}
             </span>
           </div>
-          <CandleChart candles={candles} strike={strike} height={230} />
+
+          <div className="mt-2 flex items-center justify-between px-2">
+            <span className="text-xs font-medium text-sky-400">15m</span>
+            <button
+              onClick={() => setShowTwap((v) => !v)}
+              className="flex items-center gap-1.5 rounded-md bg-ink-800 px-2 py-1"
+              title="Time-weighted average price of the underlying"
+            >
+              <span className="text-[11px] font-medium text-slate-300">TWAP</span>
+              <span className={`relative h-3.5 w-7 rounded-full transition-colors ${
+                showTwap ? 'bg-amber-500' : 'bg-slate-600'}`}>
+                <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white
+                                  transition-all ${showTwap ? 'left-[16px]' : 'left-0.5'}`} />
+              </span>
+            </button>
+          </div>
+
+          <CandleChart candles={candles} strike={strike} height={250}
+                       chartType={chartType} showTwap={showTwap} />
         </div>
 
         {/* Depth split */}
@@ -232,12 +335,13 @@ export default function TradePanel({ cash }) {
                  style={{ width: `${yesShare}%` }} />
             <div className="flex-1 bg-rose-500/70" />
           </div>
-          <div className="mt-1.5 flex justify-between text-[11px]">
+          <div className="mt-1.5 flex justify-between text-[11px]"
+               title="Open interest in USD. Delta's public API exposes no traded-volume field for binaries, but these contracts list ~20 minutes before expiry with no prior book, so open interest is effectively this round's volume.">
             <span className="text-emerald-400">
-              YES <span className="nums text-slate-500">(depth: {yesDepth || 0})</span>
+              YES <span className="nums text-slate-500">(Vol: {money(yesVol)})</span>
             </span>
             <span className="text-rose-400">
-              <span className="nums text-slate-500">(depth: {noDepth || 0})</span> NO
+              <span className="nums text-slate-500">(Vol: {money(noVol)})</span> NO
             </span>
           </div>
         </div>
