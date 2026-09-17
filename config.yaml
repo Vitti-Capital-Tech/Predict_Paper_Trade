@@ -16,7 +16,9 @@ api:
 
 # "Do it only when BTC ATR is more than 200"
 atr:
-  candle_symbol: BTCUSDT   # do NOT use BTCUSD here - that series is stale/flat
+  # Delta's spot index. Do NOT use BTCUSD (stale) or BTCUSDT (barely trades at
+  # short resolutions - most 5m bars are flat, understating ATR ~2.4x).
+  candle_symbol: .DEXBTUSDT
   resolution: 5m
   period: 14
   min_atr: 200.0

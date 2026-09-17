@@ -1,33 +1,37 @@
 import { useMemo, useRef, useState } from 'react'
 
 /**
- * Price chart matching Delta's Predict panel: OHLC legend, candle/line series,
- * optional TWAP overlay, the market's strike, a crosshair, and price/time axes.
+ * Price chart matching Delta's Predict panel.
  *
- * Inline SVG rather than a charting library — one series and a couple of
- * overlays do not justify the bundle weight.
+ * Deliberate choices copied from the venue: no gridlines, a blue line series,
+ * a "Target" pill pinned to the strike, and right-axis tags for the target
+ * (blue), the TWAP (amber) and the last price (bright blue).
  */
 
-const fmtPrice = (v) =>
+const axisPrice = (v) =>
   `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-const fmtAxis = (v) => `$${Math.round(v).toLocaleString('en-US')}`
+const tagPrice = (v) =>
+  `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 const hhmm = (ts) =>
   new Date(ts * 1000).toLocaleTimeString('en-US', {
     hour: '2-digit', minute: '2-digit', hour12: false })
 
-const dateLabel = (ts) => {
-  const d = new Date(ts * 1000)
-  const day = d.toLocaleDateString('en-US', { day: '2-digit', month: 'short' })
-  const yr = `'${String(d.getFullYear()).slice(2)}`
-  return `${day} ${yr}  ${hhmm(ts)}`
+const COLORS = {
+  line: '#3b9df8',
+  last: '#2f86eb',
+  target: '#2f86eb',
+  twap: '#f0b90b',
+  up: '#26a69a',
+  down: '#ef5350',
+  axis: '#8b95a5',
 }
 
 /**
- * Time-weighted average price across the visible window, using each bar's
- * typical price (H+L+C)/3. Delta settles Predict markets on a TWAP of the
- * underlying, so this is the line the panel's TWAP toggle reveals.
+ * Time-weighted average price across the window, from each bar's typical
+ * price. Delta settles on a TWAP of the final moments, so this is what the
+ * TWAP toggle reveals.
  */
 function twapSeries(rows) {
   let sum = 0
@@ -37,8 +41,21 @@ function twapSeries(rows) {
   })
 }
 
+function Tag({ x, y, width, text, fill, color = '#fff' }) {
+  return (
+    <g>
+      <rect x={x} y={y - 8} width={width} height={16} rx={2} fill={fill} />
+      <text x={x + width / 2} y={y + 4} fill={color} fontSize="10.5"
+            fontWeight="600" textAnchor="middle"
+            fontFamily="ui-monospace, monospace">
+        {text}
+      </text>
+    </g>
+  )
+}
+
 export default function CandleChart({
-  candles, strike, height = 300, chartType = 'candles', showTwap = true,
+  candles, strike, height = 330, chartType = 'line', showTwap = true,
 }) {
   const [hover, setHover] = useState(null)
   const svgRef = useRef(null)
@@ -50,10 +67,10 @@ export default function CandleChart({
 
     const W = 760
     const H = height
-    const AXIS_W = 74          // right price axis
-    const TIME_H = 22          // bottom time axis
-    const PAD_T = 30           // room for the OHLC legend
-    const PAD_B = 8
+    const AXIS_W = 86
+    const TIME_H = 24
+    const PAD_T = chartType === 'candles' ? 26 : 12
+    const PAD_B = 6
 
     const twap = twapSeries(rows)
 
@@ -64,24 +81,39 @@ export default function CandleChart({
       max = Math.max(max, ...twap.map((t) => t.value))
       min = Math.min(min, ...twap.map((t) => t.value))
     }
-    const pad = (max - min) * 0.1 || 1
+    const pad = (max - min) * 0.12 || 1
     max += pad; min -= pad
 
     const plotW = W - AXIS_W
     const plotH = H - TIME_H - PAD_B
     const step = plotW / rows.length
-    const bodyW = Math.max(1.5, Math.min(13, step * 0.6))
+    const bodyW = Math.max(1.5, Math.min(11, step * 0.6))
 
     const y = (v) => PAD_T + ((max - v) / (max - min)) * (plotH - PAD_T)
     const x = (i) => i * step + step / 2
 
+    // Delta labels the axis in round increments. Aim for ~9 rows, and pick the
+    // nearest nice step rather than the next one up, which was jumping from
+    // 250 to 500 and leaving only three labels on screen.
+    const span = max - min
+    const rawStep = span / 9
+    const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
+    const norm = rawStep / mag
+    const niceNorm = [1, 2, 2.5, 5, 10].reduce((best, n) =>
+      Math.abs(Math.log(n / norm)) < Math.abs(Math.log(best / norm)) ? n : best, 1)
+    const niceStep = niceNorm * mag
+    const ticks = []
+    for (let v = Math.ceil(min / niceStep) * niceStep; v <= max; v += niceStep) {
+      ticks.push(v)
+    }
+
     return {
-      W, H, AXIS_W, TIME_H, plotW, plotH, rows, twap, x, y, step, bodyW,
-      ticks: Array.from({ length: 5 }, (_, i) => min + ((max - min) * i) / 4),
+      W, H, AXIS_W, TIME_H, plotW, plotH, rows, twap, x, y, step, bodyW, ticks,
       last: rows[rows.length - 1],
+      lastTwap: twap[twap.length - 1]?.value ?? null,
       strikeY: Number.isFinite(strike) ? y(strike) : null,
     }
-  }, [candles, strike, height, showTwap])
+  }, [candles, strike, height, showTwap, chartType])
 
   if (!view) {
     return (
@@ -93,28 +125,39 @@ export default function CandleChart({
   }
 
   const { W, H, AXIS_W, TIME_H, plotW, plotH, rows, twap, x, y, step, bodyW,
-          ticks, last, strikeY } = view
-
-  // Both tags sit on the right axis; when the strike and the last price are
-  // close they would draw on top of each other, so nudge the strike clear.
-  const lastY = y(last.close)
-  const strikeTagY =
-    strikeY !== null && Math.abs(strikeY - lastY) < 17
-      ? strikeY + (strikeY <= lastY ? -17 : 17)
-      : strikeY
+          ticks, last, lastTwap, strikeY } = view
 
   const active = hover !== null ? rows[hover] : last
   const chg = active.close - active.open
   const chgPct = active.open ? (chg / active.open) * 100 : 0
-  const upBar = chg >= 0
-  const barColor = upBar ? '#22c55e' : '#ef4444'
+  const legendColor = chg >= 0 ? COLORS.up : COLORS.down
+
+  const lastY = y(last.close)
+  const twapY = lastTwap !== null ? y(lastTwap) : null
+
+  // Nudge overlapping tags apart, but only after sorting by position — spacing
+  // them in insertion order would push a higher price below a lower one.
+  const tagSlots = [
+    { key: 'last', y: lastY },
+    showTwap && twapY !== null ? { key: 'twap', y: twapY } : null,
+    strikeY !== null ? { key: 'target', y: strikeY } : null,
+  ].filter(Boolean).sort((a, b) => a.y - b.y)
+
+  const GAP = 17
+  for (let i = 1; i < tagSlots.length; i += 1) {
+    const prev = tagSlots[i - 1]
+    if (tagSlots[i].y - prev.y < GAP) tagSlots[i].y = prev.y + GAP
+  }
+  const tagY = Object.fromEntries(tagSlots.map((t) => [t.key, t.y]))
+  const lastTagY = tagY.last
+  const twapTagY = tagY.twap ?? null
+  const targetTagY = tagY.target ?? null
 
   function onMove(e) {
     const rect = svgRef.current.getBoundingClientRect()
     const px = ((e.clientX - rect.left) / rect.width) * W
     if (px > plotW) { setHover(null); return }
-    const i = Math.max(0, Math.min(rows.length - 1, Math.floor(px / step)))
-    setHover(i)
+    setHover(Math.max(0, Math.min(rows.length - 1, Math.floor(px / step))))
   }
 
   const linePath = rows
@@ -122,59 +165,61 @@ export default function CandleChart({
   const twapPath = twap
     .map((t, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(t.value)}`).join(' ')
 
+  const tickEvery = Math.max(1, Math.ceil(rows.length / 6))
+
   return (
     <svg
       ref={svgRef}
       viewBox={`0 0 ${W} ${H}`}
-      // Width-driven: a fixed pixel height would letterbox the drawing inside
-      // the SVG box, leaving dead space under the time axis.
       className="block w-full select-none"
       onMouseMove={onMove}
       onMouseLeave={() => setHover(null)}
       role="img"
-      aria-label="Price chart with market threshold"
+      aria-label="Price chart with the market target"
     >
-      {/* OHLC legend */}
-      <text x={4} y={14} fontSize="10.5" fontFamily="ui-monospace, monospace">
-        <tspan fill="#94a3b8">O</tspan><tspan fill={barColor}>{fmtPrice(active.open)} </tspan>
-        <tspan fill="#94a3b8">H</tspan><tspan fill={barColor}>{fmtPrice(active.high)} </tspan>
-        <tspan fill="#94a3b8">L</tspan><tspan fill={barColor}>{fmtPrice(active.low)} </tspan>
-        <tspan fill="#94a3b8">C</tspan><tspan fill={barColor}>{fmtPrice(active.close)} </tspan>
-        <tspan fill={barColor}>
-          {chg >= 0 ? '+' : '-'}{Math.abs(chg).toFixed(2)} ({chgPct >= 0 ? '+' : '−'}
+      {/* Candle mode carries a compact legend, as the app does */}
+      {chartType === 'candles' && (
+        <text x={4} y={13} fontSize="10.5" fill={legendColor}
+              fontFamily="ui-monospace, monospace">
+          {tagPrice(active.close)} {chg >= 0 ? '+' : '-'}
+          {Math.abs(chg).toFixed(2)} ({chgPct >= 0 ? '+' : '−'}
           {Math.abs(chgPct).toFixed(2)}%)
-        </tspan>
-      </text>
+        </text>
+      )}
 
-      {/* price grid + axis */}
+      {/* Price axis — labels only, no gridlines */}
       {ticks.map((v) => (
-        <g key={v}>
-          <line x1={0} x2={plotW} y1={y(v)} y2={y(v)} stroke="#1e293b" strokeWidth="1" />
-          <text x={plotW + 6} y={y(v) + 3.5} fill="#64748b" fontSize="10"
-                fontFamily="ui-monospace, monospace">{fmtAxis(v)}</text>
-        </g>
+        <text key={v} x={W - 6} y={y(v) + 3.5} fill={COLORS.axis} fontSize="10"
+              textAnchor="end" fontFamily="ui-monospace, monospace">
+          {axisPrice(v)}
+        </text>
       ))}
 
-      {/* strike threshold */}
+      {/* Target line + pill */}
       {strikeY !== null && (
         <g>
           <line x1={0} x2={plotW} y1={strikeY} y2={strikeY}
-                stroke="#eab308" strokeWidth="1" strokeDasharray="5 4" />
-          <rect x={plotW + 2} y={strikeTagY - 8} width={AXIS_W - 6} height={16} rx={3}
-                fill="#eab308" />
-          <text x={plotW + 2 + (AXIS_W - 6) / 2} y={strikeTagY + 3.5} fill="#1c1917"
-                fontSize="10" fontWeight="700" textAnchor="middle"
-                fontFamily="ui-monospace, monospace">
-            {Math.round(strike).toLocaleString('en-US')}
+                stroke={COLORS.target} strokeWidth="1" strokeDasharray="2 3"
+                opacity="0.85" />
+          <rect x={4} y={strikeY - 9} width={52} height={18} rx={3} fill={COLORS.target} />
+          <text x={30} y={strikeY + 4} fill="#fff" fontSize="10.5" fontWeight="600"
+                textAnchor="middle">
+            Target
           </text>
         </g>
       )}
 
-      {/* series */}
+      {/* TWAP overlay */}
+      {showTwap && (
+        <path d={twapPath} fill="none" stroke={COLORS.twap} strokeWidth="1.3"
+              opacity="0.95" vectorEffect="non-scaling-stroke" />
+      )}
+
+      {/* Series */}
       {chartType === 'candles' ? (
         rows.map((c, i) => {
           const rising = c.close >= c.open
-          const color = rising ? '#22c55e' : '#ef4444'
+          const color = rising ? COLORS.up : COLORS.down
           const top = y(Math.max(c.open, c.close))
           const bottom = y(Math.min(c.open, c.close))
           return (
@@ -187,32 +232,24 @@ export default function CandleChart({
           )
         })
       ) : (
-        <path d={linePath} fill="none" stroke="#38bdf8" strokeWidth="1.6"
-              strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-      )}
-
-      {/* TWAP overlay */}
-      {showTwap && (
-        <path d={twapPath} fill="none" stroke="#f59e0b" strokeWidth="1.4"
-              strokeDasharray="1 0" opacity="0.9"
+        <path d={linePath} fill="none" stroke={COLORS.line} strokeWidth="1.6"
+              strokeLinejoin="round" strokeLinecap="round"
               vectorEffect="non-scaling-stroke" />
       )}
 
-      {/* last price tag */}
-      <g>
-        <line x1={0} x2={plotW} y1={y(last.close)} y2={y(last.close)}
-              stroke={last.close >= last.open ? '#22c55e' : '#ef4444'}
-              strokeWidth="1" strokeDasharray="2 3" opacity="0.65" />
-        <rect x={plotW + 2} y={y(last.close) - 8} width={AXIS_W - 6} height={16} rx={3}
-              fill={last.close >= last.open ? '#16a34a' : '#dc2626'} />
-        <text x={plotW + 2 + (AXIS_W - 6) / 2} y={y(last.close) + 3.5} fill="#fff"
-              fontSize="10" fontWeight="700" textAnchor="middle"
-              fontFamily="ui-monospace, monospace">
-          {fmtAxis(last.close).replace('$', '$')}
-        </text>
-      </g>
+      {/* Right-axis tags */}
+      {targetTagY !== null && (
+        <Tag x={plotW + 4} y={targetTagY} width={AXIS_W - 10}
+             text={tagPrice(strike)} fill={COLORS.target} />
+      )}
+      {twapTagY !== null && lastTwap !== null && (
+        <Tag x={plotW + 4} y={twapTagY} width={AXIS_W - 10}
+             text={tagPrice(lastTwap)} fill={COLORS.twap} color="#1c1917" />
+      )}
+      <Tag x={plotW + 4} y={lastTagY} width={AXIS_W - 10}
+           text={tagPrice(last.close)} fill={COLORS.last} />
 
-      {/* crosshair */}
+      {/* Crosshair */}
       {hover !== null && (
         <g>
           <line x1={x(hover)} x2={x(hover)} y1={0} y2={plotH}
@@ -222,22 +259,19 @@ export default function CandleChart({
         </g>
       )}
 
-      {/* time axis */}
-      <g>
-        <line x1={0} x2={plotW} y1={plotH} y2={plotH} stroke="#1e293b" strokeWidth="1" />
-        {rows.map((c, i) =>
-          i % Math.max(1, Math.ceil(rows.length / 5)) === 0 && i < rows.length - 2 ? (
-            <text key={c.time} x={x(i)} y={plotH + 15} fill="#64748b" fontSize="10"
-                  textAnchor="middle" fontFamily="ui-monospace, monospace">
-              {hhmm(c.time)}
-            </text>
-          ) : null)}
-        <rect x={plotW - 148} y={plotH + 3} width={146} height={17} rx={2} fill="#334155" />
-        <text x={plotW - 75} y={plotH + 15} fill="#e2e8f0" fontSize="10"
-              textAnchor="middle" fontFamily="ui-monospace, monospace">
-          {dateLabel(active.time)}
-        </text>
-      </g>
+      {/* Time axis */}
+      {rows.map((c, i) => {
+        if (i % tickEvery !== 0 || i > rows.length - 2) return null
+        const isActive = hover === i
+        return (
+          <text key={c.time} x={x(i)} y={plotH + 16}
+                fill={isActive ? '#e2e8f0' : COLORS.axis}
+                fontSize="10" fontWeight={isActive ? '700' : '400'}
+                textAnchor="middle" fontFamily="ui-monospace, monospace">
+            {hhmm(c.time)}
+          </text>
+        )
+      })}
     </svg>
   )
 }

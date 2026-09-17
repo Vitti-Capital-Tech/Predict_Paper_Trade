@@ -23,9 +23,16 @@ class ApiConfig:
 
 @dataclass
 class AtrConfig:
-    """ATR gate. `candle_symbol` matters: the BTCUSD series on this venue is
-    stale/flat, which would silently disable the filter. BTCUSDT is live."""
-    candle_symbol: str = "BTCUSDT"
+    """ATR gate.
+
+    `candle_symbol` matters more than it looks. BTCUSD is stale and flat, which
+    disables the filter outright. BTCUSDT looks alive but barely trades at
+    short resolutions - 51 of 60 five-minute bars came back flat with zero
+    volume, understating ATR by roughly 2.4x (32 against 77 on the same
+    window). `.DEXBTUSDT` is Delta's spot index: continuous, and what these
+    markets settle against.
+    """
+    candle_symbol: str = ".DEXBTUSDT"
     resolution: str = "5m"
     period: int = 14
     min_atr: float = 200.0

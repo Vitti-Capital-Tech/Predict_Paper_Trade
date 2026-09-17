@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchBinaryTickers, fetchCandles, fetchSpotTicker,
   buildRounds, legFor, sizeOrder, availableAssets, spotSymbolFor,
-  RESOLUTIONS, lookbackHoursFor,
+  RESOLUTIONS, lookbackHoursFor, barResolutionFor, indexSymbolFor,
 } from '../lib/delta'
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
 import CandleChart from './CandleChart'
@@ -69,7 +69,7 @@ export default function TradePanel({ account, workerLive }) {
   const [investment, setInvestment] = useState(25)
   const [slippage, setSlippage] = useState(0.05)
   const [candles, setCandles] = useState([])
-  const [chartType, setChartType] = useState('candles')
+  const [chartType, setChartType] = useState('line')
   const [showTwap, setShowTwap] = useState(true)
   const [now, setNow] = useState(Date.now())
   const [placing, setPlacing] = useState(null)
@@ -123,11 +123,12 @@ export default function TradePanel({ account, workerLive }) {
     let alive = true
     setCandles([])
     const load = () => fetchCandles(
-      spotSymbolFor(asset), resolution, lookbackHoursFor(resolution))
+      indexSymbolFor(asset), barResolutionFor(resolution),
+      lookbackHoursFor(resolution))
       .then((c) => alive && setCandles(c))
       .catch(() => {})
     load()
-    const t = setInterval(load, 20000)
+    const t = setInterval(load, 10000)
     return () => { alive = false; clearInterval(t) }
   }, [asset, resolution])
 
@@ -156,6 +157,16 @@ export default function TradePanel({ account, workerLive }) {
     () => rounds.find((r) => r.expiryCode === expiryCode) ?? rounds[0] ?? null,
     [rounds, expiryCode])
 
+  // Rounds expire and drop out of the feed. Without this the selector keeps
+  // pointing at a code that no longer exists and renders an empty label, even
+  // though the panel has already fallen back to the next round.
+  useEffect(() => {
+    if (!rounds.length) return
+    if (!rounds.some((r) => r.expiryCode === expiryCode)) {
+      setExpiryCode(rounds[0].expiryCode)
+    }
+  }, [rounds, expiryCode])
+
   // Default to the strike nearest spot, the way the app opens.
   useEffect(() => {
     if (!round) return
@@ -180,8 +191,8 @@ export default function TradePanel({ account, workerLive }) {
   const yesSize = sizeOrder(investment, yesLeg?.ask)
   const noSize = sizeOrder(investment, noLeg?.ask)
 
-  const yesVol = Number(yesLeg?.oiUsd ?? 0)
-  const noVol = Number(noLeg?.oiUsd ?? 0)
+  const yesVol = Number(yesLeg?.volUsd ?? 0)
+  const noVol = Number(noLeg?.volUsd ?? 0)
   const yesShare = yesVol + noVol > 0 ? (yesVol / (yesVol + noVol)) * 100 : 50
 
   const spot = spotTicker?.spot ?? round?.spot ?? null
@@ -333,55 +344,59 @@ export default function TradePanel({ account, workerLive }) {
             )}
           </div>
 
-          {/* Chart toolbar */}
+          {/* Chart toolbar — series + countdown, then timeframes + TWAP */}
           <div className="flex items-center justify-between px-4 pt-3">
-            <div className="flex items-center gap-2">
-              <div className="flex gap-1">
-                {[['line', LineIcon], ['candles', CandleIcon]].map(([key, Icon]) => (
-                  <button
-                    key={key}
-                    onClick={() => setChartType(key)}
-                    title={key === 'line' ? 'Line' : 'Candlesticks'}
-                    className={`rounded border p-1 transition-colors ${
-                      chartType === key
-                        ? 'border-sky-500/50 bg-sky-500/10 text-sky-300'
-                        : 'border-white/10 text-slate-500 hover:text-slate-300'}`}
-                  >
-                    <Icon />
-                  </button>
-                ))}
-              </div>
-              <Dropdown
-                ariaLabel="Chart timeframe"
-                size="sm"
-                value={resolution}
-                onChange={setResolution}
-                options={RESOLUTIONS.map((r) => ({ value: r, label: r }))}
-                className="w-20"
-              />
+            <div className="flex gap-1">
+              {[['line', LineIcon], ['candles', CandleIcon]].map(([key, Icon]) => (
+                <button
+                  key={key}
+                  onClick={() => setChartType(key)}
+                  title={key === 'line' ? 'Line' : 'Candlesticks'}
+                  className={`rounded border p-1 transition-colors ${
+                    chartType === key
+                      ? 'border-sky-500/50 bg-sky-500/10 text-sky-300'
+                      : 'border-white/10 text-slate-500 hover:text-slate-300'}`}
+                >
+                  <Icon />
+                </button>
+              ))}
             </div>
+            <span className="nums text-xs text-slate-400">
+              ⧗ {expired ? '00:00' : clock(secondsLeft)}
+            </span>
+          </div>
 
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setShowTwap((v) => !v)}
-                className="flex items-center gap-1.5 rounded-md bg-ink-800 px-2 py-1"
-                title="Time-weighted average price of the underlying"
-              >
-                <span className="text-[11px] font-medium text-slate-300">TWAP</span>
-                <span className={`relative h-3.5 w-7 rounded-full transition-colors ${
-                  showTwap ? 'bg-amber-500' : 'bg-slate-600'}`}>
-                  <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white
-                                    transition-all ${showTwap ? 'left-[16px]' : 'left-0.5'}`} />
-                </span>
-              </button>
-              <span className="nums text-xs text-slate-400">
-                ⧗ {expired ? '00:00' : clock(secondsLeft)}
-              </span>
+          <div className="mt-2 flex items-center justify-between px-4">
+            <div className="flex items-center gap-0.5">
+              {RESOLUTIONS.map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setResolution(r)}
+                  className={`rounded px-2 py-0.5 text-xs font-medium transition-colors ${
+                    resolution === r
+                      ? 'text-sky-400'
+                      : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  {r}
+                </button>
+              ))}
             </div>
+            <button
+              onClick={() => setShowTwap((v) => !v)}
+              className="flex items-center gap-1.5 rounded-md bg-ink-800 px-2 py-1"
+              title="Time-weighted average price — what the venue settles on"
+            >
+              <span className="text-[11px] font-medium text-slate-300">TWAP</span>
+              <span className={`relative h-3.5 w-7 rounded-full transition-colors ${
+                showTwap ? 'bg-amber-500' : 'bg-slate-600'}`}>
+                <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white
+                                  transition-all ${showTwap ? 'left-[16px]' : 'left-0.5'}`} />
+              </span>
+            </button>
           </div>
 
           <div className="px-2 pb-1 pt-2">
-            <CandleChart candles={candles} strike={strike} height={340}
+            <CandleChart candles={candles} strike={strike} height={330}
                          chartType={chartType} showTwap={showTwap} />
           </div>
 
@@ -394,7 +409,7 @@ export default function TradePanel({ account, workerLive }) {
             </div>
             <div
               className="mt-1.5 flex justify-between text-[11px]"
-              title="Open interest in USD. Delta's public API exposes no traded-volume field for binaries, but these contracts list ~20 minutes before expiry with no prior book, so open interest is effectively this round's volume."
+              title="Contracts held on each side, valued at each contract's $1 max payout - the same figure Delta's panel shows as Vol."
             >
               <span className="text-emerald-400">
                 YES <span className="nums text-slate-500">(Vol: {money(yesVol)})</span>

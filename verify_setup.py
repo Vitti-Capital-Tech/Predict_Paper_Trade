@@ -41,13 +41,18 @@ def main() -> int:
 
     print("\n2. BTC ATR feed")
     try:
+        from predict_paper.config import Config as _Cfg
         from predict_paper.indicators import AtrGate
-        gate = AtrGate(DeltaClient(), "BTCUSDT", "5m", 14, 200.0)
+        _c = _Cfg.load("config.yaml") if os.path.exists("config.yaml") else _Cfg()
+        gate = AtrGate(DeltaClient(), _c.atr.candle_symbol, _c.atr.resolution,
+                       _c.atr.period, _c.atr.min_atr)
         passes, atr = gate.passes()
         if atr is None:
             bad("no ATR value returned"); failures += 1
         else:
-            ok("ATR(14, 5m) = %.1f -> gate %s" % (atr, "OPEN" if passes else "CLOSED"))
+            ok("ATR(%d, %s) on %s = %.1f -> gate %s" % (
+                _c.atr.period, _c.atr.resolution, _c.atr.candle_symbol, atr,
+                "OPEN" if passes else "CLOSED"))
     except Exception as exc:
         bad("ATR failed: %s" % exc); failures += 1
 
