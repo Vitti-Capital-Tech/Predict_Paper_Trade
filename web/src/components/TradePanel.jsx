@@ -8,6 +8,7 @@ import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supaba
 import CandleChart from './CandleChart'
 import Dropdown from './Dropdown'
 import RulesModal from './RulesModal'
+import { HourglassIcon, ClockIcon, PauseIcon, InfoIcon } from './icons'
 
 const PRESETS = [5, 25, 50]
 const SLIPPAGE_OPTIONS = [0.01, 0.02, 0.05, 0.1, 0.25]
@@ -262,11 +263,7 @@ export default function TradePanel({ account, workerLive }) {
             title="Rules & settlement"
             className="ml-1 text-sky-400/80 transition-colors hover:text-sky-300"
           >
-            <svg viewBox="0 0 20 20" className="h-4.5 w-4.5" fill="none">
-              <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M10 9v5M10 6.2v.1" stroke="currentColor" strokeWidth="1.8"
-                    strokeLinecap="round" />
-            </svg>
+<InfoIcon />
           </button>
         </div>
 
@@ -323,12 +320,16 @@ export default function TradePanel({ account, workerLive }) {
           {/* Status strip */}
           <div className="flex items-center justify-center gap-2 bg-ink-800 py-2 text-xs text-slate-300">
             {halted ? (
-              <span className="nums text-amber-400">
-                ⏸ Trading paused for the final minute · settles in {clock(secondsLeft)}
+              <span className="nums flex items-center gap-1.5 text-amber-400">
+                <PauseIcon />
+                Trading paused for the final minute · settles in {clock(secondsLeft)}
               </span>
             ) : expired ? (
               <>
-                <span>🕐 Contract Expired</span>
+                <span className="flex items-center gap-1.5">
+                  <ClockIcon />
+                  Contract Expired
+                </span>
                 {nextLiveRound && (
                   <button
                     onClick={() => { touched.current = true
@@ -340,7 +341,10 @@ export default function TradePanel({ account, workerLive }) {
                 )}
               </>
             ) : (
-              <span className="nums">⏳ Settles in {clock(secondsLeft)}</span>
+              <span className="nums flex items-center gap-1.5">
+                <HourglassIcon />
+                Settles in {clock(secondsLeft)}
+              </span>
             )}
           </div>
 
@@ -361,8 +365,9 @@ export default function TradePanel({ account, workerLive }) {
                 </button>
               ))}
             </div>
-            <span className="nums text-xs text-slate-400">
-              ⧗ {expired ? '00:00' : clock(secondsLeft)}
+            <span className="nums flex items-center gap-1.5 text-xs text-slate-400">
+              <HourglassIcon />
+              {expired ? '00:00' : clock(secondsLeft)}
             </span>
           </div>
 

@@ -18,14 +18,19 @@ const hhmm = (ts) =>
   new Date(ts * 1000).toLocaleTimeString('en-US', {
     hour: '2-digit', minute: '2-digit', hour12: false })
 
+// Sampled against Delta's own panel: a blue-tinted axis rather than neutral
+// grey, and a pale guide line for the target so the blue pill and tag carry
+// the colour instead of the rule across the plot.
 const COLORS = {
-  line: '#3b9df8',
+  line: '#2f8fef',
   last: '#2f86eb',
   target: '#2f86eb',
+  targetRule: '#8290a6',
   twap: '#f0b90b',
   up: '#26a69a',
   down: '#ef5350',
-  axis: '#8b95a5',
+  axis: '#9aa7bd',
+  time: '#8290a6',
 }
 
 /**
@@ -199,8 +204,8 @@ export default function CandleChart({
       {strikeY !== null && (
         <g>
           <line x1={0} x2={plotW} y1={strikeY} y2={strikeY}
-                stroke={COLORS.target} strokeWidth="1" strokeDasharray="2 3"
-                opacity="0.85" />
+                stroke={COLORS.targetRule} strokeWidth="1" strokeDasharray="1 4"
+                strokeLinecap="round" opacity="0.9" />
           <rect x={4} y={strikeY - 9} width={52} height={18} rx={3} fill={COLORS.target} />
           <text x={30} y={strikeY + 4} fill="#fff" fontSize="10.5" fontWeight="600"
                 textAnchor="middle">
@@ -265,7 +270,7 @@ export default function CandleChart({
         const isActive = hover === i
         return (
           <text key={c.time} x={x(i)} y={plotH + 16}
-                fill={isActive ? '#e2e8f0' : COLORS.axis}
+                fill={isActive ? '#e2e8f0' : COLORS.time}
                 fontSize="10" fontWeight={isActive ? '700' : '400'}
                 textAnchor="middle" fontFamily="ui-monospace, monospace">
             {hhmm(c.time)}
