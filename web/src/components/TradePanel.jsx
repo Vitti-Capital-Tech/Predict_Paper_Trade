@@ -3,6 +3,7 @@ import {
   fetchBinaryTickers, fetchCandles, fetchSpotTicker,
   buildRounds, legFor, sizeOrder, availableAssets, spotSymbolFor,
   RESOLUTIONS, lookbackHoursFor, barResolutionFor, indexSymbolFor,
+  mergeLiveBar,
 } from '../lib/delta'
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
 import CandleChart from './CandleChart'
@@ -197,6 +198,13 @@ export default function TradePanel({ account, workerLive }) {
   const yesShare = yesVol + noVol > 0 ? (yesVol / (yesVol + noVol)) * 100 : 50
 
   const spot = spotTicker?.spot ?? round?.spot ?? null
+
+  // The candle feed trails the live quote by a minute or two; splice the
+  // current price onto the last bar so the right edge is not stale.
+  const liveCandles = useMemo(
+    () => mergeLiveBar(candles, spot, barResolutionFor(resolution)),
+    [candles, spot, resolution])
+
   const changeUp = (spotTicker?.changePct ?? 0) >= 0
 
   async function submit(outcome) {
@@ -401,7 +409,7 @@ export default function TradePanel({ account, workerLive }) {
           </div>
 
           <div className="px-2 pb-1 pt-2">
-            <CandleChart candles={candles} strike={strike} height={330}
+            <CandleChart candles={liveCandles} strike={strike} height={330}
                          chartType={chartType} showTwap={showTwap} />
           </div>
 

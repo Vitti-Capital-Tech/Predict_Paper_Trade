@@ -178,6 +178,48 @@ export function barResolutionFor(window) {
            '1h': '1m', '4h': '3m', '1d': '15m' }[window] ?? '1m'
 }
 
+const BAR_SECONDS = { '1m': 60, '3m': 180, '5m': 300, '15m': 900,
+                     '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 }
+
+/**
+ * Fold the live price into the final bar.
+ *
+ * The candle endpoint trails the live quote: its last minute or two come back
+ * flat and roughly 30 points behind `spot_price`, which drew a couple of dead
+ * dashes at the right edge. Delta's own chart is fed by ticks, so its right
+ * edge is always current. Merging the live price reproduces that without
+ * pretending to have tick history.
+ */
+export function mergeLiveBar(candles, livePrice, resolution) {
+  if (!Array.isArray(candles) || !candles.length) return candles
+  const price = Number(livePrice)
+  if (!Number.isFinite(price) || price <= 0) return candles
+
+  const barSec = BAR_SECONDS[resolution] ?? 60
+  const barStart = Math.floor(Date.now() / 1000 / barSec) * barSec
+  const rows = candles.slice()
+  const last = rows[rows.length - 1]
+
+  if (last.time === barStart) {
+    rows[rows.length - 1] = {
+      ...last,
+      high: Math.max(last.high, price),
+      low: Math.min(last.low, price),
+      close: price,
+    }
+  } else if (barStart > last.time) {
+    rows.push({
+      time: barStart,
+      open: last.close,
+      high: Math.max(last.close, price),
+      low: Math.min(last.close, price),
+      close: price,
+      volume: 0,
+    })
+  }
+  return rows
+}
+
 /** Roughly how many bars a window yields, for sizing decisions. */
 export function barCountFor(window) {
   const mins = { '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, '1d': 1440 }[window] ?? 30
