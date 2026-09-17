@@ -45,6 +45,8 @@ class Position:
     # Underlying price when the position settled (approximate - see
     # migration 003). None for positions closed before expiry.
     settlement_spot: Optional[float] = None
+    # Paper account this trade belongs to (manual trades only).
+    account_id: Optional[int] = None
 
     @property
     def cost(self) -> float:
@@ -135,7 +137,8 @@ class Portfolio:
     def open_position(self, round_id: str, symbol: str, role: str, side: str,
                       strike: float, fill, now: datetime,
                       spot: Optional[float] = None,
-                      atr: Optional[float] = None) -> Position:
+                      atr: Optional[float] = None,
+                      account_id: Optional[int] = None) -> Position:
         fee = fill.qty * fill.avg_price * self.cfg.taker_fee_rate
         pos = Position(
             position_id=self._next_id(symbol), round_id=round_id, symbol=symbol,
@@ -143,7 +146,7 @@ class Portfolio:
             entry_price=fill.avg_price, entry_time=now.isoformat(),
             entry_top_price=fill.top_price, entry_slippage=fill.slippage_vs_top,
             entry_levels=fill.levels_consumed, entry_spot=spot, entry_atr=atr,
-            fees=fee,
+            fees=fee, account_id=account_id,
         )
         self.cash -= pos.cost + fee
         self.positions[pos.position_id] = pos
@@ -187,6 +190,13 @@ class Portfolio:
             log.debug("store upsert failed: %s", exc)
 
     def _finish(self, pos: Position, kind: str) -> None:
+        # A manual trade's proceeds go back to its paper account.
+        if pos.account_id and pos.exit_price is not None:
+            try:
+                self.store.adjust_account_balance(
+                    pos.account_id, pos.qty * pos.exit_price)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("account credit failed: %s", exc)
         self.closed.append(pos)
         self.positions.pop(pos.position_id, None)
         self._append(self.trades_path, asdict(pos))

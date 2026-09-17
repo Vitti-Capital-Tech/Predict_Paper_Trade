@@ -40,6 +40,7 @@ class NullStore:
     def heartbeat(self, *a: Any, **k: Any) -> None: return None
     def finish_run(self, *a: Any, **k: Any) -> None: return None
     def pending_manual_orders(self, *a: Any, **k: Any) -> list: return []
+    def adjust_account_balance(self, *a: Any, **k: Any) -> None: return None
     def resolve_manual_order(self, *a: Any, **k: Any) -> None: return None
 
 
@@ -141,6 +142,7 @@ class SupabaseStore:
             "exit_slippage": pos.get("exit_slippage") or 0,
             "fees": pos.get("fees") or 0,
             "settlement_spot": pos.get("settlement_spot"),
+            "account_id": pos.get("account_id"),
         }
         # Columns added by later migrations. If the migration has not been run,
         # PostgREST rejects the whole row, which would silently stop recording
@@ -153,7 +155,7 @@ class SupabaseStore:
                             prefer="resolution=merge-duplicates,return=minimal",
                             params={"on_conflict": "run_id,position_id"})
             if ok is None and self._last_error:
-                for col in ("settlement_spot",):
+                for col in ("settlement_spot", "account_id"):
                     if col in row and col in self._last_error:
                         log.warning("column '%s' missing in Supabase - run the "
                                     "matching migration; continuing without it", col)
@@ -230,6 +232,18 @@ class SupabaseStore:
             "processed_at": datetime.now(timezone.utc).isoformat(),
         }
         self._patch("manual_orders", payload, {"id": "eq.%d" % int(order_id)})
+
+    def adjust_account_balance(self, account_id: int, delta: float) -> None:
+        """Move a paper account's balance by `delta`, atomically.
+
+        Uses the SQL function from migration 004 rather than read-modify-write,
+        so a debit and a credit arriving together cannot clobber each other.
+        """
+        if not account_id:
+            return
+        with self._lock:
+            self._post("rpc/adjust_account_balance",
+                       {"p_account_id": int(account_id), "p_delta": float(delta)})
 
     def finish_run(self, cash: float, status: str = "stopped") -> None:
         if self.run_id is None:

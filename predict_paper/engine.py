@@ -271,10 +271,13 @@ class Engine:
                                   % (cost, self.portfolio.cash))
                 continue
 
+            account_id = order.get("account_id")
             pos = self.portfolio.open_position(
                 order.get("round_id") or "manual", symbol, "manual",
                 contract.side, contract.strike, fill, now,
-                contract.spot_price, atr)
+                contract.spot_price, atr, account_id=account_id)
+            if account_id:
+                self.store.adjust_account_balance(account_id, -cost)
             self.store.resolve_manual_order(
                 oid, "filled", position_id=pos.position_id,
                 fill_price=fill.avg_price, contracts=fill.qty)

@@ -78,7 +78,7 @@ function CandleIcon() {
   )
 }
 
-export default function TradePanel({ cash }) {
+export default function TradePanel({ account, workerLive }) {
   const [rounds, setRounds] = useState([])
   const [spotTicker, setSpotTicker] = useState(null)
   const [error, setError] = useState(null)
@@ -140,7 +140,7 @@ export default function TradePanel({ cash }) {
   // missing — otherwise an un-run migration means a 404 every 3 seconds.
   const refreshOrders = useCallback(() => {
     if (!isConfigured || ordersOffline) return
-    fetchManualOrders(8)
+    fetchManualOrders(8, account?.id ?? null)
       .then(setOrders)
       .catch((e) => {
         const msg = `${e?.message ?? e}`
@@ -148,7 +148,7 @@ export default function TradePanel({ cash }) {
           setOrdersOffline(true)
         }
       })
-  }, [ordersOffline])
+  }, [ordersOffline, account?.id])
 
   useEffect(() => {
     if (ordersOffline) return
@@ -194,6 +194,11 @@ export default function TradePanel({ cash }) {
     const leg = outcome === 'yes' ? yesLeg : noLeg
     const size = outcome === 'yes' ? yesSize : noSize
     if (!leg || !leg.ask || expired || size.contracts < 1) return
+    if (account && size.invested > Number(account.balance)) {
+      setToast({ kind: 'err',
+                 msg: `Not enough balance: needs ${money(size.invested)}, have ${money(account.balance)}.` })
+      return
+    }
     setPlacing(outcome)
     setToast(null)
     try {
@@ -205,6 +210,7 @@ export default function TradePanel({ cash }) {
         investment: Number(investment),
         slippageTolerance: Number(slippage),
         quotedPrice: leg.ask,
+        accountId: account?.id ?? null,
       })
       setToast({
         kind: 'ok',
@@ -217,6 +223,8 @@ export default function TradePanel({ cash }) {
       setPlacing(null)
     }
   }
+
+  const pendingCount = orders.filter((o) => o.status === 'pending').length
 
   const sides = [
     { key: 'yes', leg: yesLeg, size: yesSize,
@@ -231,7 +239,6 @@ export default function TradePanel({ cash }) {
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl
                       border border-white/10 bg-ink-900 px-4 py-3">
         <div className="flex items-center gap-2">
-          <span className="text-base font-semibold italic text-sky-400">Predict</span>
           <span className="text-base font-semibold text-slate-200">BTC</span>
           <Caret />
           <button
@@ -383,7 +390,7 @@ export default function TradePanel({ cash }) {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-200">Place paper trade</h3>
               <span className="nums text-[11px] text-slate-500">
-                Avbl: {cash === null || cash === undefined ? '--' : money(cash)}
+                Avbl: {account ? money(account.balance) : '--'}
               </span>
             </div>
 
@@ -469,6 +476,15 @@ export default function TradePanel({ cash }) {
               </p>
             )}
 
+            {pendingCount > 0 && !workerLive && (
+              <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2
+                            text-[11px] text-amber-300">
+                {pendingCount} order{pendingCount > 1 ? 's' : ''} waiting — no worker is
+                running to fill {pendingCount > 1 ? 'them' : 'it'}. Start one with{' '}
+                <code className="rounded bg-black/30 px-1">python run_live.py</code>.
+              </p>
+            )}
+
             {ordersOffline && (
               <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2
                             text-[11px] text-amber-300">
@@ -488,42 +504,6 @@ export default function TradePanel({ cash }) {
             )}
           </div>
 
-          {orders.length > 0 && (
-            <div className="rounded-xl border border-white/5 bg-ink-900 p-4">
-              <h3 className="text-xs font-semibold tracking-wide text-slate-300">
-                Recent paper orders
-              </h3>
-              <ul className="mt-2 space-y-1.5">
-                {orders.map((o) => (
-                  <li key={o.id} className="flex items-start justify-between gap-3 text-[11px]">
-                    <div className="min-w-0">
-                      <span className={`font-semibold ${
-                        o.outcome === 'yes' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {String(o.outcome).toUpperCase()}
-                      </span>
-                      <span className="nums ml-1.5 text-slate-500">
-                        {Number(o.strike).toLocaleString('en-US')} · {money(o.investment)}
-                      </span>
-                      {o.reject_reason && (
-                        <p className="mt-0.5 text-slate-600">{o.reject_reason}</p>
-                      )}
-                      {o.status === 'filled' && (
-                        <p className="nums mt-0.5 text-slate-600">
-                          {Number(o.contracts)} @ {Number(o.fill_price).toFixed(4)}
-                        </p>
-                      )}
-                    </div>
-                    <span className={`shrink-0 rounded px-1.5 py-0.5 font-medium ${
-                      o.status === 'filled' ? 'bg-emerald-500/10 text-emerald-400'
-                        : o.status === 'rejected' ? 'bg-rose-500/10 text-rose-400'
-                        : 'bg-slate-500/10 text-slate-400'}`}>
-                      {o.status}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </div>
       </div>
     </div>

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { supabase, isConfigured, fetchLatestRun, fetchRuns } from './lib/supabase'
-import { Badge } from './components/ui'
+import { isConfigured, fetchAccounts, fetchLatestRun } from './lib/supabase'
 import TradePanel from './components/TradePanel'
 import PortfolioTabs from './components/PortfolioTabs'
+import AccountBar from './components/AccountBar'
 
 function Setup() {
   return (
@@ -20,113 +20,93 @@ VITE_SUPABASE_ANON_KEY=eyJhbGci...`}
         <p className="mt-4 text-xs text-slate-500">
           Both values are in your Supabase dashboard under Project Settings → API.
           Use the <strong className="text-slate-400">anon</strong> key here — this page
-          is read-only. The service role key belongs only in the Python worker&apos;s
-          environment.
+          only reads market data and account balances.
         </p>
       </div>
     </main>
   )
 }
 
-export default function App() {
-  const [runs, setRuns] = useState([])
-  const [run, setRun] = useState(null)
-  const [now, setNow] = useState(Date.now())
+const LAST_ACCOUNT_KEY = 'predict.accountId'
 
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(t)
+export default function App() {
+  const [accounts, setAccounts] = useState([])
+  const [accountId, setAccountId] = useState(null)
+  const [accountsUnavailable, setAccountsUnavailable] = useState(false)
+  // Only used to warn when an order is stuck because nothing is filling it.
+  const [workerSeenAt, setWorkerSeenAt] = useState(null)
+
+  const loadAccounts = useCallback(async () => {
+    if (!isConfigured) return
+    try {
+      const rows = await fetchAccounts()
+      setAccounts(rows)
+      setAccountsUnavailable(false)
+      setAccountId((prev) => {
+        if (prev && rows.some((r) => r.id === prev)) return prev
+        const stored = Number(localStorage.getItem(LAST_ACCOUNT_KEY))
+        if (stored && rows.some((r) => r.id === stored)) return stored
+        return rows[0]?.id ?? null
+      })
+    } catch (e) {
+      const msg = `${e?.message ?? e}`
+      if (/accounts|schema cache|does not exist|PGRST205/i.test(msg)) {
+        setAccountsUnavailable(true)
+      }
+    }
   }, [])
 
+  useEffect(() => { loadAccounts() }, [loadAccounts])
+
+  useEffect(() => {
+    const t = setInterval(loadAccounts, 5000)
+    return () => clearInterval(t)
+  }, [loadAccounts])
+
+  useEffect(() => {
+    if (accountId) {
+      try { localStorage.setItem(LAST_ACCOUNT_KEY, String(accountId)) } catch { /* private mode */ }
+    }
+  }, [accountId])
+
+  // Worker liveness, kept only so a stuck order can explain itself.
   useEffect(() => {
     if (!isConfigured) return
-    let cancelled = false
-    ;(async () => {
-      try {
-        const [latest, allRuns] = await Promise.all([fetchLatestRun(), fetchRuns()])
-        if (cancelled) return
-        setRuns(allRuns)
-        setRun(latest)
-      } catch {
-        /* the trade panel still works on live Delta data without Supabase */
-      }
-    })()
-    return () => { cancelled = true }
-  }, [])
-
-  // Keep the heartbeat and cash fresh.
-  const refreshRun = useCallback(() => {
-    if (!isConfigured || !run?.id) return
-    fetchLatestRun().then((r) => r && setRun((prev) =>
-      prev && r.id === prev.id ? { ...prev, ...r } : prev)).catch(() => {})
-  }, [run?.id])
-
-  useEffect(() => {
-    const t = setInterval(refreshRun, 5000)
+    const tick = () => fetchLatestRun()
+      .then((r) => setWorkerSeenAt(r?.last_heartbeat ?? null))
+      .catch(() => {})
+    tick()
+    const t = setInterval(tick, 10000)
     return () => clearInterval(t)
-  }, [refreshRun])
-
-  useEffect(() => {
-    if (!isConfigured || !run?.id) return
-    const channel = supabase
-      .channel(`run-${run.id}`)
-      .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'runs', filter: `id=eq.${run.id}` },
-        (payload) => setRun((prev) => ({ ...prev, ...payload.new })))
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [run?.id])
+  }, [])
 
   if (!isConfigured) return <Setup />
 
-  const heartbeatAge = run?.last_heartbeat
-    ? (now - new Date(run.last_heartbeat).getTime()) / 1000
+  const account = accounts.find((a) => a.id === accountId) ?? null
+  const workerAgeSec = workerSeenAt
+    ? (Date.now() - new Date(workerSeenAt).getTime()) / 1000
     : null
-  const live = heartbeatAge !== null && heartbeatAge < 20
+  const workerLive = workerAgeSec !== null && workerAgeSec < 30
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-10 border-b border-white/5 bg-ink-950/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-base font-semibold text-slate-100">
-              Predict Paper Trading
-            </h1>
-            <Badge tone={live ? 'green' : 'slate'}>
-              <span className={`h-1.5 w-1.5 rounded-full ${
-                live ? 'live-dot bg-emerald-400' : 'bg-slate-500'}`} />
-              {live ? 'LIVE' : 'OFFLINE'}
-            </Badge>
-          </div>
+      <header className="sticky top-0 z-20 border-b border-white/5 bg-ink-950/90 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
+          <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>
 
-          <div className="flex items-center gap-3">
-            {heartbeatAge !== null && (
-              <span className="nums hidden text-xs text-slate-500 sm:inline">
-                worker {Math.round(heartbeatAge)}s ago
-              </span>
-            )}
-            {runs.length > 0 && (
-              <select
-                value={run?.id ?? ''}
-                onChange={(e) => {
-                  const next = runs.find((r) => String(r.id) === e.target.value)
-                  if (next) setRun(next)
-                }}
-                className="rounded-md border border-white/10 bg-ink-800 px-2 py-1 text-xs
-                           text-slate-300 outline-none focus:border-sky-500/50"
-              >
-                {runs.map((r) => (
-                  <option key={r.id} value={r.id}>#{r.id} {r.run_name}</option>
-                ))}
-              </select>
-            )}
-          </div>
+          <AccountBar
+            account={account}
+            accounts={accounts}
+            unavailable={accountsUnavailable}
+            onSelect={setAccountId}
+            onAccountsChanged={loadAccounts}
+          />
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:py-6">
-        <TradePanel cash={run?.cash} />
-        <PortfolioTabs runId={run?.id} />
+        <TradePanel account={account} workerLive={workerLive} />
+        <PortfolioTabs accountId={accountId} />
       </main>
     </div>
   )

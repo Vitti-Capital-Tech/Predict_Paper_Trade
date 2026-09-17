@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchPositions } from '../lib/supabase'
+import { fetchAccountPositions } from '../lib/supabase'
 import { fetchBinaryTickers } from '../lib/delta'
 
 /**
@@ -152,18 +152,24 @@ function ClosedCard({ p }) {
   )
 }
 
-export default function PortfolioTabs({ runId }) {
+export default function PortfolioTabs({ accountId }) {
   const [tab, setTab] = useState('positions')
   const [positions, setPositions] = useState([])
   const [marks, setMarks] = useState({})
   const [error, setError] = useState(null)
 
   const load = useCallback(() => {
-    if (!runId) return
-    fetchPositions(runId)
+    if (!accountId) { setPositions([]); return }
+    fetchAccountPositions(accountId)
       .then((rows) => { setPositions(rows); setError(null) })
-      .catch((e) => setError(e.message ?? String(e)))
-  }, [runId])
+      .catch((e) => {
+        const msg = `${e?.message ?? e}`
+        // account_id arrives with migration 004; until then show nothing
+        // rather than an error the user cannot act on from here.
+        setError(/account_id|column/i.test(msg)
+          ? 'Run migration 004 to group trades by account.' : msg)
+      })
+  }, [accountId])
 
   useEffect(() => {
     load()

@@ -56,6 +56,38 @@ export async function fetchLatestSnapshot(runId) {
   return data?.[0] ?? null
 }
 
+// ------------------------------------------------------------- accounts ----
+// Paper-trading accounts. Unlike `runs.cash` (which a worker rewrites on every
+// heartbeat) these are owned by the UI, so an edited balance sticks.
+
+export async function fetchAccounts() {
+  const { data, error } = await supabase
+    .from('accounts')
+    .select('*')
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return data ?? []
+}
+
+export async function createAccount(name, startingBalance) {
+  const { data, error } = await supabase
+    .from('accounts')
+    .insert({ name, starting_balance: startingBalance, balance: startingBalance })
+    .select()
+  if (error) throw error
+  return data?.[0] ?? null
+}
+
+export async function updateAccount(id, patch) {
+  const { data, error } = await supabase
+    .from('accounts')
+    .update(patch)
+    .eq('id', id)
+    .select()
+  if (error) throw error
+  return data?.[0] ?? null
+}
+
 /**
  * Queue a paper trade. The browser deliberately cannot create a position:
  * RLS allows only a `pending` row with no execution fields, and the worker
@@ -73,18 +105,31 @@ export async function placeManualOrder(order) {
       investment: order.investment,
       slippage_tolerance: order.slippageTolerance,
       quoted_price: order.quotedPrice,
+      account_id: order.accountId ?? null,
     })
     .select()
   if (error) throw error
   return data?.[0] ?? null
 }
 
-export async function fetchManualOrders(limit = 20) {
-  const { data, error } = await supabase
-    .from('manual_orders')
-    .select('*')
+export async function fetchManualOrders(limit = 20, accountId = null) {
+  let q = supabase.from('manual_orders').select('*')
+  if (accountId) q = q.eq('account_id', accountId)
+  const { data, error } = await q
     .order('created_at', { ascending: false })
     .limit(limit)
+  if (error) throw error
+  return data ?? []
+}
+
+/** Positions belonging to an account, rather than to a worker run. */
+export async function fetchAccountPositions(accountId) {
+  const { data, error } = await supabase
+    .from('positions')
+    .select('*')
+    .eq('account_id', accountId)
+    .order('entry_time', { ascending: false })
+    .limit(500)
   if (error) throw error
   return data ?? []
 }
