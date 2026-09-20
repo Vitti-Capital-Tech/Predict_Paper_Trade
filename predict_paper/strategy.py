@@ -172,6 +172,12 @@ class Strategy:
         """Implements 'exit rule ITM 50' under the configured interpretation."""
         ex = self.cfg.exit
 
+        # A hand-placed trade is the user's to exit. Taking profit on their
+        # behalf would close a position they never asked to close, so the
+        # strategy leaves manual roles alone unless explicitly told not to.
+        if getattr(position, "role", "") == "manual" and not ex.apply_to_manual:
+            return False, ""
+
         if ex.mode == "price":
             bid = contract.best_bid if contract else None
             if bid is not None and bid >= ex.take_profit_price:

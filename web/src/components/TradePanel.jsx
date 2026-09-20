@@ -6,6 +6,7 @@ import {
   mergeLiveBar,
 } from '../lib/delta'
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
+import { parseRoute, formatRoute, writeRoute, onRouteChange } from '../lib/route'
 import CandleChart from './CandleChart'
 import Dropdown from './Dropdown'
 import RulesModal from './RulesModal'
@@ -59,17 +60,20 @@ function CandleIcon() {
   )
 }
 
-export default function TradePanel({ account, workerLive }) {
-  const [assets, setAssets] = useState(['BTC'])
-  const [asset, setAsset] = useState('BTC')
+export default function TradePanel({ account, workerLive, slippage, onSlippageChange }) {
+  // A deep link decides the opening market; without one the panel falls back
+  // to the nearest round and the strike closest to spot, as before.
+  const initial = useRef(parseRoute()).current
+
+  const [assets, setAssets] = useState([initial?.asset ?? 'BTC'])
+  const [asset, setAsset] = useState(initial?.asset ?? 'BTC')
   const [resolution, setResolution] = useState('15m')
   const [rounds, setRounds] = useState([])
   const [spotTicker, setSpotTicker] = useState(null)
   const [error, setError] = useState(null)
-  const [expiryCode, setExpiryCode] = useState(null)
-  const [strike, setStrike] = useState(null)
+  const [expiryCode, setExpiryCode] = useState(initial?.expiryCode ?? null)
+  const [strike, setStrike] = useState(initial?.strike ?? null)
   const [investment, setInvestment] = useState(25)
-  const [slippage, setSlippage] = useState(0.05)
   const [candles, setCandles] = useState([])
   const [chartType, setChartType] = useState('line')
   const [showTwap, setShowTwap] = useState(true)
@@ -79,7 +83,7 @@ export default function TradePanel({ account, workerLive }) {
   const [ordersOffline, setOrdersOffline] = useState(false)
   const [toast, setToast] = useState(null)
   const [rulesOpen, setRulesOpen] = useState(false)
-  const touched = useRef(false)
+  const touched = useRef(Boolean(initial))
 
   // Live quotes straight from Delta.
   const poll = useCallback(async () => {
@@ -113,8 +117,13 @@ export default function TradePanel({ account, workerLive }) {
     return () => clearInterval(t)
   }, [])
 
-  // A different underlying has different strikes and expiries.
+  // A different underlying has different strikes and expiries. Keyed off the
+  // previous value rather than a "first render" flag: StrictMode runs effects
+  // twice, and a flag would clear the strike a deep link had just set.
+  const prevAsset = useRef(asset)
   useEffect(() => {
+    if (prevAsset.current === asset) return
+    prevAsset.current = asset
     touched.current = false
     setExpiryCode(null)
     setStrike(null)
@@ -180,6 +189,29 @@ export default function TradePanel({ account, workerLive }) {
         round.strikes[0])
     })
   }, [round])
+
+  // ---- address bar ----------------------------------------------------
+  // Keep the URL on the market being shown, so it can be copied, bookmarked
+  // and reloaded. The panel resolving its own defaults is a replace, not a
+  // navigation; only a deliberate change of market pushes a history entry.
+  const lastRoute = useRef(null)
+  useEffect(() => {
+    if (!round || strike === null) return
+    const market = { asset, strike, expiryCode: round.expiryCode }
+    const path = formatRoute(market)
+    if (lastRoute.current === path) return
+    writeRoute(market, { replace: lastRoute.current === null })
+    lastRoute.current = path
+  }, [asset, strike, round])
+
+  // Back and Forward move between markets rather than leaving the app.
+  useEffect(() => onRouteChange((r) => {
+    if (!r) return
+    touched.current = true
+    setAsset(r.asset)
+    setExpiryCode(r.expiryCode)
+    setStrike(r.strike)
+  }), [])
 
   const yesLeg = round && strike !== null ? legFor(round, strike, 'call') : null
   const noLeg = round && strike !== null ? legFor(round, strike, 'put') : null
@@ -479,7 +511,7 @@ export default function TradePanel({ account, workerLive }) {
               <Dropdown
                 ariaLabel="Slippage tolerance"
                 value={slippage}
-                onChange={(v) => setSlippage(Number(v))}
+                onChange={(v) => onSlippageChange(Number(v))}
                 options={SLIPPAGE_OPTIONS.map((s) => ({ value: s, label: `$${s.toFixed(2)}` }))}
                 className="w-28"
                 align="right"

@@ -128,6 +128,10 @@ class Portfolio:
                 return p
         return None
 
+    def open_position_by_id(self, position_id: str) -> Optional[Position]:
+        pos = self.positions.get(position_id)
+        return pos if pos is not None and pos.status == "open" else None
+
     def equity(self, marks: Optional[Dict[str, float]] = None) -> float:
         marks = marks or {}
         return self.cash + sum(

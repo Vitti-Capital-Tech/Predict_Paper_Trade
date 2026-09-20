@@ -220,7 +220,46 @@ tolerance $0.05`, `insufficient depth`, `market no longer live`).
 Manual trades are recorded with `role: manual`, so the reports keep them
 distinguishable from the strategy's own wings.
 
-> Requires `supabase/migrations/002_manual_orders.sql` to be run once.
+### Closing early
+
+Every open position carries a **Close** button showing what it is worth at the
+current bid. The click queues a close the same way a buy is queued, and the
+worker sells into real depth — so the proceeds include the spread and whatever
+the size eats through, rather than a mid price the book never offered. A close
+is refused, with the reason shown on the card, when:
+
+- the final-minute halt has started (it settles instead),
+- nothing is bid,
+- depth is too thin to clear the size, or
+- the shortfall against the price you were shown exceeds your slippage
+  tolerance — the ticket's setting, shared with the panel.
+
+Because open positions live in the worker's memory, a position opened before a
+worker restart cannot be closed by the new process; it stays open until
+settlement. That is the same caveat as everywhere else in this system.
+
+**The strategy no longer exits your trades for you.** `exit.apply_to_manual` is
+`false` by default, so the ITM-50 take-profit and any `flatten_before_expiry_sec`
+apply to the bot's own wings and leave manual positions alone — a hand-placed
+trade exits when you close it, or at settlement. Set it to `true` if you would
+rather the rule govern everything.
+
+> Requires `supabase/migrations/002_manual_orders.sql` and
+> `005_manual_close.sql` to have been run once each.
+
+### Linking to a market
+
+The panel mirrors Delta's URL shape, so a market has an address:
+
+```
+/predict/B-BTC-81100-2009261900
+```
+
+Asset, strike, and the `DDMMYYHHMM` expiry code — no `C`/`P`, because one
+Predict market is both legs. Changing strike or expiry pushes a history entry,
+so Back returns to the previous market, and a pasted link opens exactly what it
+names. With no path, the panel still opens on the nearest round and the strike
+closest to spot.
 
 ---
 
@@ -248,6 +287,9 @@ one, each is a **config flag** — flip it in `config.yaml` and re-run.
 |---|---|
 | `price` *(default)* | close when the contract trades at **0.50** |
 | `spot_points` | close when spot is 50 points past the strike |
+
+Either way the rule governs only the strategy's own positions, unless
+`exit.apply_to_manual` is turned on.
 
 Defaulted to `price` because with ATR above 200, "50 points past the strike"
 fires almost immediately and the rule stops doing any work.

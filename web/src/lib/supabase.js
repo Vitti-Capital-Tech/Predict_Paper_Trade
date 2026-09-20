@@ -97,6 +97,8 @@ export async function updateAccount(id, patch) {
 export async function placeManualOrder(order) {
   const { data, error } = await supabase
     .from('manual_orders')
+    // `action` is deliberately not sent: the column defaults to 'buy', so a
+    // buy keeps working on a database where migration 005 has not been run.
     .insert({
       symbol: order.symbol,
       round_id: order.roundId,
@@ -110,6 +112,42 @@ export async function placeManualOrder(order) {
     .select()
   if (error) throw error
   return data?.[0] ?? null
+}
+
+/**
+ * Queue an early exit for an open position.
+ *
+ * Same reasoning as an entry: the browser names the position and the price it
+ * was shown, and the worker sells into real depth. Pricing the sale here would
+ * credit proceeds the book never offered.
+ */
+export async function placeManualClose(close) {
+  const { data, error } = await supabase
+    .from('manual_orders')
+    .insert({
+      action: 'close',
+      symbol: close.symbol,
+      round_id: close.roundId,
+      close_position_id: close.positionId,
+      slippage_tolerance: close.slippageTolerance ?? 0.05,
+      quoted_price: close.quotedPrice ?? null,
+      account_id: close.accountId ?? null,
+    })
+    .select()
+  if (error) throw error
+  return data?.[0] ?? null
+}
+
+/** Recent close orders, newest first — pending ones included, so the card
+ *  can show both "closing…" and a rejection reason. */
+export async function fetchRecentCloses(accountId = null, limit = 20) {
+  let q = supabase.from('manual_orders').select('*').eq('action', 'close')
+  if (accountId) q = q.eq('account_id', accountId)
+  const { data, error } = await q
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return data ?? []
 }
 
 export async function fetchManualOrders(limit = 20, accountId = null) {

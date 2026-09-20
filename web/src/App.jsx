@@ -34,6 +34,9 @@ export default function App() {
   const [accounts, setAccounts] = useState([])
   const [accountId, setAccountId] = useState(null)
   const [accountsUnavailable, setAccountsUnavailable] = useState(false)
+  // Shared with the portfolio, so closing a position honours the same
+  // tolerance the ticket was set to rather than a second hidden default.
+  const [slippage, setSlippage] = useState(0.05)
   // Only used to warn when an order is stuck because nothing is filling it.
   const [workerSeenAt, setWorkerSeenAt] = useState(null)
 
@@ -109,8 +112,13 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:py-6">
-        <TradePanel account={account} workerLive={workerLive} />
-        <PortfolioTabs accountId={accountId} />
+        <TradePanel
+          account={account}
+          workerLive={workerLive}
+          slippage={slippage}
+          onSlippageChange={setSlippage}
+        />
+        <PortfolioTabs accountId={accountId} slippage={slippage} />
       </main>
     </div>
   )

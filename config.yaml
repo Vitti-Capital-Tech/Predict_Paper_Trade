@@ -68,6 +68,9 @@ exit:
   stop_loss_price: null            # e.g. 0.02 to cut a dead wing early
   close_loser_on_tp: false
   flatten_before_expiry_sec: null  # e.g. 30 to never carry into settlement
+  # Do these rules also govern trades placed by hand in the panel? Off means a
+  # manual position is exited only when you close it, or at settlement.
+  apply_to_manual: false
 
 # "Need to be careful about the slippages"
 fills:

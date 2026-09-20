@@ -108,8 +108,10 @@ class Engine:
 
             # A flatten scheduled inside the halt window can never execute; the
             # branch above has already skipped those, so this only fires while
-            # trading is still open.
-            if not should and self.cfg.exit.flatten_before_expiry_sec is not None:
+            # trading is still open. Manual positions are exempt for the same
+            # reason they are exempt from take-profit: the user owns the exit.
+            manual = pos.role == "manual" and not self.cfg.exit.apply_to_manual
+            if not should and not manual                     and self.cfg.exit.flatten_before_expiry_sec is not None:
                 rnd_expiry = self._expiry_by_symbol.get(pos.symbol)
                 if rnd_expiry is not None:
                     tte = (rnd_expiry - now).total_seconds()
@@ -221,6 +223,10 @@ class Engine:
             return
 
         for order in orders:
+            if (order.get("action") or "buy") == "close":
+                self._close_manual_order(order, by_symbol, now)
+                continue
+
             oid = order.get("id")
             symbol = order.get("symbol")
             contract = by_symbol.get(symbol)
@@ -311,6 +317,85 @@ class Engine:
                 fill_price=fill.avg_price, contracts=fill.qty)
             log.info("MANUAL filled %s qty=%.0f @ %.4f (quoted %s)",
                      symbol, fill.qty, fill.avg_price, quoted)
+
+    def _close_manual_order(self, order: Dict, by_symbol: Dict[str, Contract],
+                            now: datetime) -> None:
+        """Sell an open position because the panel asked to close it.
+
+        Priced the same way an entry is: walk the real book at execution time.
+        A close is worth nothing as a paper result if the proceeds come from a
+        mid quote the market would not have paid.
+        """
+        oid = order.get("id")
+        target = order.get("close_position_id")
+        pos = self.portfolio.open_position_by_id(target) if target else None
+
+        if pos is None:
+            # Either it already settled, or this worker was restarted and never
+            # held it — open positions live in memory (see README).
+            self.store.resolve_manual_order(
+                oid, "rejected",
+                reject_reason="no open position %s on this worker" % target)
+            log.info("MANUAL close rejected %s: not held", target)
+            return
+
+        contract = by_symbol.get(pos.symbol)
+        if contract is None:
+            self.store.resolve_manual_order(
+                oid, "rejected",
+                reject_reason="market no longer live — it will settle instead")
+            return
+
+        expiry = self._expiry_by_symbol.get(pos.symbol)
+        if expiry is not None:
+            tte = (expiry - now).total_seconds()
+            if tte <= self.cfg.timing.trading_halt_sec:
+                self.store.resolve_manual_order(
+                    oid, "rejected",
+                    reject_reason="trading halted for the final %.0fs "
+                                  "(%.0fs to expiry) — holding to settlement"
+                                  % (self.cfg.timing.trading_halt_sec, tte))
+                log.info("MANUAL close rejected %s: halted", pos.symbol)
+                return
+
+        bid = contract.best_bid
+        if bid is None or bid <= 0:
+            self.store.resolve_manual_order(
+                oid, "rejected", reject_reason="no bid quoted — nothing to sell into")
+            return
+
+        book = self._book(pos.symbol)
+        fill = self.fills.simulate("sell", pos.qty, book, contract.best_bid,
+                                   contract.best_ask, contract.mark_price)
+        if not fill.filled:
+            self.store.resolve_manual_order(
+                oid, "rejected", reject_reason=fill.reason)
+            log.info("MANUAL close rejected %s: %s", pos.symbol, fill.reason)
+            return
+
+        # Slippage cuts the other way on a sale: the book pays less than the
+        # touch, so the shortfall is what the tolerance has to cover.
+        quoted = order.get("quoted_price")
+        tol = float(order.get("slippage_tolerance") or 0)
+        if quoted is not None:
+            drift = float(quoted) - fill.avg_price
+            if drift > tol:
+                self.store.resolve_manual_order(
+                    oid, "rejected",
+                    reject_reason="slippage $%.4f exceeds tolerance $%.2f "
+                                  "(quoted %.4f, fill %.4f)"
+                                  % (drift, tol, float(quoted), fill.avg_price))
+                log.info("MANUAL close rejected %s: slippage %.4f > %.2f",
+                         pos.symbol, drift, tol)
+                return
+
+        # close_position credits the owning account through _finish().
+        self.portfolio.close_position(pos, fill, now, "closed from panel")
+        self.store.resolve_manual_order(
+            oid, "filled", position_id=pos.position_id,
+            fill_price=fill.avg_price, contracts=fill.qty)
+        log.info("MANUAL closed %s qty=%.0f @ %.4f", pos.symbol, fill.qty,
+                 fill.avg_price)
 
     # ---- main loop ------------------------------------------------------
     def poll_once(self) -> None:

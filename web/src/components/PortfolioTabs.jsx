@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchAccountPositions } from '../lib/supabase'
+import {
+  fetchAccountPositions, fetchRecentCloses, placeManualClose,
+} from '../lib/supabase'
 import { fetchBinaryTickers } from '../lib/delta'
 
 /**
@@ -68,11 +70,14 @@ function CardHead({ p, status, tone }) {
   )
 }
 
-function OpenCard({ p, mark }) {
+function OpenCard({ p, mark, close, onClose, busy }) {
   const invested = Number(p.entry_price) * Number(p.qty)
   const value = mark === null || mark === undefined
     ? null : Number(mark) * Number(p.qty)
   const unreal = value === null ? null : value - invested
+
+  const pending = close?.status === 'pending' || busy
+  const rejected = close?.status === 'rejected' ? close.reject_reason : null
 
   return (
     <Card>
@@ -100,6 +105,28 @@ function OpenCard({ p, mark }) {
           title="Average fill minus the touch price, times size."
         />
       </div>
+
+      <button
+        onClick={() => onClose(p, mark)}
+        disabled={pending || mark === null || mark === undefined}
+        title={mark === null || mark === undefined
+          ? 'No bid quoted — nothing to sell into'
+          : 'Sell at the market. The worker walks the real book, so the price you get may be below the bid shown.'}
+        className="mt-3 w-full rounded-lg border border-white/10 bg-ink-700 py-2 text-xs
+                   font-medium text-slate-200 transition-colors hover:border-white/25
+                   hover:bg-ink-600 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {pending
+          ? 'Closing…'
+          : value === null ? 'Close' : `Close at ${money(value)}`}
+      </button>
+
+      {rejected && (
+        <p className="mt-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-2.5 py-1.5
+                      text-[11px] text-rose-300">
+          Close rejected: {rejected}
+        </p>
+      )}
     </Card>
   )
 }
@@ -152,11 +179,17 @@ function ClosedCard({ p }) {
   )
 }
 
-export default function PortfolioTabs({ accountId }) {
+export default function PortfolioTabs({ accountId, slippage = 0.05 }) {
   const [tab, setTab] = useState('positions')
   const [positions, setPositions] = useState([])
   const [marks, setMarks] = useState({})
   const [error, setError] = useState(null)
+  // Latest close order per position, so a card can say "Closing…" or explain a
+  // rejection. Keyed by position_id.
+  const [closes, setCloses] = useState({})
+  const [closesOffline, setClosesOffline] = useState(false)
+  // Bridges the gap between the click and the row appearing in the next poll.
+  const [busy, setBusy] = useState({})
 
   const load = useCallback(() => {
     if (!accountId) { setPositions([]); return }
@@ -196,6 +229,61 @@ export default function PortfolioTabs({ accountId }) {
     return () => { alive = false; clearInterval(t) }
   }, [])
 
+  // Close orders in flight. Stops polling once the column turns out to be
+  // missing, so an un-run migration is one failed request rather than one
+  // every four seconds.
+  const loadCloses = useCallback(() => {
+    if (!accountId || closesOffline) return
+    fetchRecentCloses(accountId, 40)
+      .then((rows) => {
+        const latest = {}
+        // Newest first, so the first row seen for a position is its latest.
+        for (const r of rows) {
+          const key = r.close_position_id
+          if (key && !(key in latest)) latest[key] = r
+        }
+        setCloses(latest)
+        setBusy((prev) => {
+          const next = { ...prev }
+          for (const key of Object.keys(next)) if (latest[key]) delete next[key]
+          return next
+        })
+      })
+      .catch((e) => {
+        const msg = `${e?.message ?? e}`
+        if (/action|close_position_id|schema cache|does not exist|PGRST205|404|400/i
+            .test(msg)) {
+          setClosesOffline(true)
+        }
+      })
+  }, [accountId, closesOffline])
+
+  useEffect(() => {
+    if (closesOffline) return
+    loadCloses()
+    const t = setInterval(loadCloses, 3000)
+    return () => clearInterval(t)
+  }, [loadCloses, closesOffline])
+
+  const requestClose = useCallback(async (p, mark) => {
+    const pid = p.position_id
+    setBusy((prev) => ({ ...prev, [pid]: true }))
+    try {
+      await placeManualClose({
+        positionId: pid,
+        symbol: p.symbol,
+        roundId: p.round_id,
+        quotedPrice: mark ?? null,
+        slippageTolerance: slippage,
+        accountId,
+      })
+      loadCloses()
+    } catch (e) {
+      setBusy((prev) => { const n = { ...prev }; delete n[pid]; return n })
+      setError(e.message ?? String(e))
+    }
+  }, [accountId, slippage, loadCloses])
+
   const open = useMemo(
     () => positions.filter((p) => p.status === 'open'), [positions])
   const closed = useMemo(
@@ -234,6 +322,17 @@ export default function PortfolioTabs({ accountId }) {
           </p>
         )}
 
+        {closesOffline && tab === 'positions' && (
+          <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2
+                        text-xs text-amber-300">
+            Closing early needs{' '}
+            <code className="rounded bg-black/30 px-1">
+              supabase/migrations/005_manual_close.sql
+            </code>{' '}
+            run once.
+          </p>
+        )}
+
         {!error && rows.length === 0 && (
           <p className="py-10 text-center text-sm text-slate-600">
             {tab === 'positions'
@@ -245,7 +344,14 @@ export default function PortfolioTabs({ accountId }) {
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
           {rows.map((p) => (
             tab === 'positions'
-              ? <OpenCard key={p.id ?? p.position_id} p={p} mark={marks[p.symbol]} />
+              ? <OpenCard
+                  key={p.id ?? p.position_id}
+                  p={p}
+                  mark={marks[p.symbol]}
+                  close={closes[p.position_id]}
+                  busy={Boolean(busy[p.position_id])}
+                  onClose={requestClose}
+                />
               : <ClosedCard key={p.id ?? p.position_id} p={p} />
           ))}
         </div>

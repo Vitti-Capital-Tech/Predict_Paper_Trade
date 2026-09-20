@@ -99,6 +99,10 @@ class ExitConfig:
     close_loser_on_tp: bool = False
     # Force-flatten this many seconds before settlement (None = hold to expiry).
     flatten_before_expiry_sec: Optional[float] = None
+    # Whether these rules also govern trades placed by hand from the panel.
+    # Off by default: a manual position is the user's to exit, and having the
+    # strategy take profit on their behalf silently overrides the click.
+    apply_to_manual: bool = False
 
 
 @dataclass
