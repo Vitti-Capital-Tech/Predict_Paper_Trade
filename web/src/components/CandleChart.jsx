@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 
 /**
  * Price chart matching Delta's Predict panel.
@@ -8,8 +8,12 @@ import { useMemo, useRef, useState } from 'react'
  * (blue), the TWAP (amber) and the last price (bright blue).
  */
 
-const axisPrice = (v) =>
-  `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+// Cents on the axis cost about 40px and say nothing at these prices, so a
+// narrow screen drops them the way Delta's own axis stays readable.
+const axisPrice = (v, compact = false) =>
+  `$${Number(v).toLocaleString('en-US', {
+    minimumFractionDigits: compact ? 0 : 2,
+    maximumFractionDigits: compact ? 0 : 2 })}`
 
 const tagPrice = (v) =>
   `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -94,15 +98,44 @@ export default function CandleChart({
 }) {
   const [hover, setHover] = useState(null)
   const svgRef = useRef(null)
+  const wrapRef = useRef(null)
+
+  // Draw at the container's real width so one SVG unit is one CSS pixel.
+  //
+  // The viewBox used to be a fixed 760 wide scaled to fit, which on a 375px
+  // phone shrank everything by 0.49x: a 330px chart rendered about 160px tall
+  // and 10.5px axis labels came out near 5px. The chart was not styled
+  // differently from Delta's, it was half size.
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return undefined
+    const apply = () => {
+      const w = el.clientWidth
+      if (w > 0) setWidth(w)
+    }
+    apply()
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', apply)
+      return () => window.removeEventListener('resize', apply)
+    }
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const view = useMemo(() => {
     const rows = (candles ?? []).filter(
       (c) => Number.isFinite(c.high) && Number.isFinite(c.low))
     if (rows.length < 2) return null
+    if (width < 120) return null   // before the first measure
 
-    const W = 760
+    const W = width
     const H = height
-    const AXIS_W = 86
+    // Wide enough for a price tag, which carries cents and so needs about 64px
+    // of 10.5px monospace. The axis *labels* drop their cents on a narrow
+    // screen (see axisPrice) so they still fit comfortably in the same gutter.
+    const AXIS_W = W < 520 ? 78 : 86
     const TIME_H = 24
     const PAD_T = chartType === 'candles' ? 26 : 12
     const PAD_B = 6
@@ -150,13 +183,17 @@ export default function CandleChart({
       lastTwap: twap[twap.length - 1]?.value ?? null,
       strikeY: Number.isFinite(strike) ? y(strike) : null,
     }
-  }, [candles, strike, height, showTwap, chartType])
+  }, [candles, strike, height, showTwap, chartType, width])
 
   if (!view) {
+    // Keeps wrapRef mounted: the observer lives on this node, so returning a
+    // different element here would leave width at 0 and never recover.
     return (
-      <div className="flex items-center justify-center text-xs text-slate-600"
+      <div ref={wrapRef}
+           className="flex w-full items-center justify-center overflow-hidden
+                      text-xs text-slate-600"
            style={{ height }}>
-        Loading chart…
+        {width < 120 ? '' : 'Loading chart…'}
       </div>
     )
   }
@@ -206,14 +243,16 @@ export default function CandleChart({
 
   const linePath = rows
     .map((c, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(c.close)}`).join(' ')
-  const twapPath = twap
-    .map((t, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(t.value)}`).join(' ')
+
 
   return (
+    <div ref={wrapRef} className="w-full overflow-hidden">
     <svg
       ref={svgRef}
       viewBox={`0 0 ${W} ${H}`}
-      className="block w-full select-none"
+      width={W}
+      height={H}
+      className="block select-none"
       onMouseMove={onMove}
       onMouseLeave={() => setHover(null)}
       role="img"
@@ -223,7 +262,7 @@ export default function CandleChart({
       {chartType === 'candles' && (
         <text x={4} y={13} fontSize="10.5" fill={legendColor}
               fontFamily="ui-monospace, monospace">
-          ${active.close.toFixed(2)} {chg >= 0 ? '+' : '-'}
+          ${active.close.toFixed(2)} {chg >= 0 ? '+$' : '-$'}
           {Math.abs(chg).toFixed(2)} ({chgPct >= 0 ? '+' : '−'}
           {Math.abs(chgPct).toFixed(2)}%)
         </text>
@@ -240,7 +279,7 @@ export default function CandleChart({
           {!isCovered(y(v)) && (
             <text x={W - 6} y={y(v) + 3.5} fill={COLORS.axis} fontSize="10"
                   textAnchor="end" fontFamily="ui-monospace, monospace">
-              {axisPrice(v)}
+              {axisPrice(v, W < 520)}
             </text>
           )}
         </g>
@@ -268,10 +307,15 @@ export default function CandleChart({
         </g>
       )}
 
-      {/* TWAP overlay */}
-      {showTwap && (
-        <path d={twapPath} fill="none" stroke={COLORS.twap} strokeWidth="1.3"
-              opacity="0.95" vectorEffect="non-scaling-stroke" />
+      {/* TWAP as a horizontal rule at the current level, not a series tracking
+          price. The venue's candle view shows exactly this — an amber dotted
+          line — and its line view appears to have none only because the rule
+          sits on top of the price. A second line following the series, which
+          is what this used to draw, is not something Delta shows anywhere. */}
+      {showTwap && lastTwap !== null && (
+        <line x1={0} x2={plotW} y1={y(lastTwap)} y2={y(lastTwap)}
+              stroke={COLORS.twap} strokeWidth="1" strokeDasharray="2 3"
+              opacity="0.9" vectorEffect="non-scaling-stroke" />
       )}
 
       {/* Series */}
@@ -338,5 +382,6 @@ export default function CandleChart({
         )
       })}
     </svg>
+    </div>
   )
 }
