@@ -131,9 +131,15 @@ to fill it" warning means.
 
 ### Hosting the worker
 
-**AWS (ECS Fargate)** — `deploy/aws/` has the task definition, a build-and-push
-script and a full runbook, including putting the service key in Parameter Store
-rather than in the task. About $9/month. See
+**AWS Lightsail** — the simplest option, and it needs nothing installed
+locally: create a $5/month Ubuntu instance, open the browser SSH terminal and
+run one command. `deploy/lightsail/` has the setup script, the systemd unit and
+the runbook. See [deploy/lightsail/README.md](deploy/lightsail/README.md).
+
+**AWS (ECS Fargate)** — no server to manage and a natural fit for CI, but it
+needs Docker locally to build the image. `deploy/aws/` has the task definition,
+a build-and-push script and a full runbook, including putting the service key in
+Parameter Store rather than in the task. About $9/month. See
 [deploy/aws/README.md](deploy/aws/README.md).
 
 **Render** — `Dockerfile` and `render.yaml` are in the repo. **New → Blueprint**,

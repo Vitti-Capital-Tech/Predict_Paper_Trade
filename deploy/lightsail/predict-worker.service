@@ -1,0 +1,38 @@
+# systemd unit for the paper-trading worker.
+#
+# Restart=always covers the two ways this dies: an unhandled exception, and the
+# instance rebooting. RestartSec gives Delta's API a moment rather than
+# hammering it in a crash loop.
+[Unit]
+Description=Delta Predict paper-trading worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=predict
+WorkingDirectory=/opt/predict
+
+# Holds SUPABASE_SERVICE_KEY, which bypasses RLS. Mode 0600, owned by root.
+EnvironmentFile=/etc/predict-worker.env
+
+ExecStart=/opt/predict/.venv/bin/python run_live.py --run-name cloud
+
+Restart=always
+RestartSec=10
+# Unbuffered, so journalctl shows the log as it happens rather than in blocks.
+Environment=PYTHONUNBUFFERED=1
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=predict-worker
+
+# It reads public market data and writes to Supabase. It needs nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/predict/data
+
+[Install]
+WantedBy=multi-user.target
