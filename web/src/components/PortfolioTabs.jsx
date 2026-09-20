@@ -179,7 +179,7 @@ function ClosedCard({ p }) {
   )
 }
 
-export default function PortfolioTabs({ accountId, slippage = 0.05 }) {
+export default function PortfolioTabs({ accountId, slippage = 0.05, refreshKey = 0 }) {
   const [tab, setTab] = useState('positions')
   const [positions, setPositions] = useState([])
   const [marks, setMarks] = useState({})
@@ -206,9 +206,12 @@ export default function PortfolioTabs({ accountId, slippage = 0.05 }) {
 
   useEffect(() => {
     load()
-    const t = setInterval(load, 4000)
+    const t = setInterval(load, 2500)
     return () => clearInterval(t)
   }, [load])
+
+  // A fill just landed; don't make the user wait for the next tick.
+  useEffect(() => { if (refreshKey) load() }, [refreshKey, load])
 
   // Live marks so open positions can show a current value.
   useEffect(() => {

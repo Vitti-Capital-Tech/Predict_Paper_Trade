@@ -60,7 +60,8 @@ function CandleIcon() {
   )
 }
 
-export default function TradePanel({ account, workerLive, slippage, onSlippageChange }) {
+export default function TradePanel({ account, workerLive, slippage, onSlippageChange,
+                                     onOrderResolved }) {
   // A deep link decides the opening market; without one the panel falls back
   // to the nearest round and the strike closest to spot, as before.
   const initial = useRef(parseRoute()).current
@@ -83,6 +84,9 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
   const [orders, setOrders] = useState([])
   const [ordersOffline, setOrdersOffline] = useState(false)
   const [toast, setToast] = useState(null)
+  // The order we are waiting on, so the toast can report what happened
+  // instead of sitting on "Queued" until the user wonders if it worked.
+  const watching = useRef(null)
   const [rulesOpen, setRulesOpen] = useState(false)
   const touched = useRef(Boolean(initial))
 
@@ -149,21 +153,40 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
   const refreshOrders = useCallback(() => {
     if (!isConfigured || ordersOffline) return
     fetchManualOrders(8, account?.id ?? null)
-      .then(setOrders)
+      .then((rows) => {
+        setOrders(rows)
+
+        // Report the outcome the moment the worker writes it, and tell the
+        // portfolio to reload now rather than on its own timer.
+        const id = watching.current
+        if (id === null || id === undefined) return
+        const done = rows.find((o) => o.id === id && o.status !== 'pending')
+        if (!done) return
+        watching.current = null
+        setToast(done.status === 'filled'
+          ? { kind: 'ok',
+              msg: `Filled ${Math.round(Number(done.contracts))} contracts at `
+                 + `$${Number(done.fill_price).toFixed(4)}.` }
+          : { kind: 'err', msg: `Rejected: ${done.reject_reason}` })
+        onOrderResolved?.()
+      })
       .catch((e) => {
         const msg = `${e?.message ?? e}`
         if (/manual_orders|schema cache|does not exist|PGRST205|404/i.test(msg)) {
           setOrdersOffline(true)
         }
       })
-  }, [ordersOffline, account?.id])
+  }, [ordersOffline, account?.id, onOrderResolved])
 
+  const [awaitingFill, setAwaitingFill] = useState(false)
   useEffect(() => {
     if (ordersOffline) return
     refreshOrders()
-    const t = setInterval(refreshOrders, 3000)
+    // A second apart while an order is in flight, so a fill that lands in ~1s
+    // is reported in ~1s; back to three when nothing is happening.
+    const t = setInterval(refreshOrders, awaitingFill ? 1000 : 3000)
     return () => clearInterval(t)
-  }, [refreshOrders, ordersOffline])
+  }, [refreshOrders, ordersOffline, awaitingFill])
 
   const round = useMemo(
     () => rounds.find((r) => r.expiryCode === expiryCode) ?? rounds[0] ?? null,
@@ -285,7 +308,7 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
     setPlacing(outcome)
     setToast(null)
     try {
-      await placeManualOrder({
+      const queued = await placeManualOrder({
         symbol: leg.symbol,
         roundId: round.roundId,
         outcome,
@@ -298,9 +321,11 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
         quotedPrice: leg.ask,
         accountId: account?.id ?? null,
       })
+      watching.current = queued?.id ?? null
+      setAwaitingFill(true)
       setToast({
-        kind: 'ok',
-        msg: `Queued ${outcome.toUpperCase()} · ${size.contracts} contracts at ${priceLabel(leg.ask)} — the worker fills it against the real book.`,
+        kind: 'pending',
+        msg: `Placing ${outcome.toUpperCase()} · ${Math.round(size.contracts)} contracts — pricing against the live book…`,
       })
       refreshOrders()
     } catch (e) {
@@ -311,6 +336,13 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
   }
 
   const pendingCount = orders.filter((o) => o.status === 'pending').length
+
+  // Drop back to the idle cadence once the queue drains.
+  useEffect(() => {
+    if (awaitingFill && pendingCount === 0 && watching.current === null) {
+      setAwaitingFill(false)
+    }
+  }, [awaitingFill, pendingCount])
 
   const sides = [
     { key: 'yes', leg: yesLeg, size: yesSize,
@@ -613,7 +645,9 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
               <p className={`mt-3 rounded-lg border px-3 py-2 text-[11px] ${
                 toast.kind === 'ok'
                   ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                  : 'border-rose-500/30 bg-rose-500/10 text-rose-300'}`}>
+                  : toast.kind === 'pending'
+                    ? 'border-sky-500/30 bg-sky-500/10 text-sky-300'
+                    : 'border-rose-500/30 bg-rose-500/10 text-rose-300'}`}>
                 {toast.msg}
               </p>
             )}

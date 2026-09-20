@@ -37,6 +37,9 @@ export default function App() {
   // Shared with the portfolio, so closing a position honours the same
   // tolerance the ticket was set to rather than a second hidden default.
   const [slippage, setSlippage] = useState(0.05)
+  // Bumped when an order resolves, so the portfolio reloads immediately
+  // instead of waiting out its own polling interval.
+  const [tradeTick, setTradeTick] = useState(0)
   // Only used to warn when an order is stuck because nothing is filling it.
   const [workerSeenAt, setWorkerSeenAt] = useState(null)
 
@@ -117,8 +120,10 @@ export default function App() {
           workerLive={workerLive}
           slippage={slippage}
           onSlippageChange={setSlippage}
+          onOrderResolved={() => setTradeTick((n) => n + 1)}
         />
-        <PortfolioTabs accountId={accountId} slippage={slippage} />
+        <PortfolioTabs accountId={accountId} slippage={slippage}
+                       refreshKey={tradeTick} />
       </main>
     </div>
   )
