@@ -47,6 +47,9 @@ class Position:
     settlement_spot: Optional[float] = None
     # Paper account this trade belongs to (manual trades only).
     account_id: Optional[int] = None
+    # The run whose row this position is. Set on adoption so an inherited
+    # position updates its original row rather than forking a new one.
+    run_id: Optional[int] = None
 
     @property
     def cost(self) -> float:
@@ -137,6 +140,70 @@ class Portfolio:
         return self.cash + sum(
             p.qty * marks.get(p.symbol, p.entry_price) for p in self.open_positions)
 
+    # ---- recovery -------------------------------------------------------
+    def adopt(self, rows: List[Dict[str, Any]]) -> int:
+        """Take over open positions left behind by a worker that stopped.
+
+        Without this a restart abandons them: the row stays `open` forever,
+        never settled and impossible to close from the panel. Hosting makes
+        restarts routine - every redeploy is one - so recovery is not an edge
+        case.
+
+        Cash is reduced by what the positions cost, reconstructing the balance
+        the previous worker held. Account balances are deliberately untouched:
+        they were debited when the trade was entered and are credited when it
+        finishes, so re-debiting here would charge for the same trade twice.
+        """
+        adopted = 0
+        for row in rows or []:
+            pid = row.get("position_id")
+            if not pid or pid in self.positions:
+                continue
+            try:
+                pos = Position(
+                    position_id=pid,
+                    round_id=row.get("round_id") or "",
+                    symbol=row["symbol"],
+                    role=row.get("role") or "manual",
+                    side=row.get("side") or "call",
+                    strike=float(row.get("strike") or 0),
+                    qty=float(row.get("qty") or 0),
+                    entry_price=float(row.get("entry_price") or 0),
+                    entry_time=str(row.get("entry_time") or ""),
+                    entry_top_price=row.get("entry_top_price"),
+                    entry_slippage=float(row.get("entry_slippage") or 0),
+                    entry_levels=int(row.get("entry_levels") or 0),
+                    entry_spot=row.get("entry_spot"),
+                    entry_atr=row.get("entry_atr"),
+                    fees=float(row.get("fees") or 0),
+                    account_id=row.get("account_id"),
+                    run_id=row.get("run_id"),
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                log.warning("could not adopt position %s: %s", pid, exc)
+                continue
+
+            self.positions[pos.position_id] = pos
+            self.cash -= pos.cost
+            adopted += 1
+            log.info("ADOPT  %-28s %-9s qty=%-5.0f @ %.4f (run %s)",
+                     pos.symbol, pos.role, pos.qty, pos.entry_price, pos.run_id)
+
+        if adopted:
+            # New ids must not collide in memory with the ones just restored;
+            # the table's key is (run_id, position_id) but this dict's is not.
+            self._seq = max(self._seq, self._max_seq())
+            self.log_event("adopt", count=adopted, cash=self.cash)
+        return adopted
+
+    def _max_seq(self) -> int:
+        best = 0
+        for pid in self.positions:
+            _, _, tail = str(pid).rpartition("#")
+            if tail.isdigit():
+                best = max(best, int(tail))
+        return best
+
     # ---- actions --------------------------------------------------------
     def open_position(self, round_id: str, symbol: str, role: str, side: str,
                       strike: float, fill, now: datetime,
@@ -151,6 +218,7 @@ class Portfolio:
             entry_top_price=fill.top_price, entry_slippage=fill.slippage_vs_top,
             entry_levels=fill.levels_consumed, entry_spot=spot, entry_atr=atr,
             fees=fee, account_id=account_id,
+            run_id=getattr(self.store, "run_id", None),
         )
         self.cash -= pos.cost + fee
         self.positions[pos.position_id] = pos

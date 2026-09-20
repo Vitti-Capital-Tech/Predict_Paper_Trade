@@ -131,10 +131,15 @@ to fill it" warning means.
 
 ### Hosting the worker
 
-`Dockerfile` and `render.yaml` are in the repo. On Render: **New → Blueprint**,
-point it at this repo, and set `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` in
-the dashboard. The service type is `worker` — a background process with no HTTP
-port — and Render restarts it if it exits.
+**AWS (ECS Fargate)** — `deploy/aws/` has the task definition, a build-and-push
+script and a full runbook, including putting the service key in Parameter Store
+rather than in the task. About $9/month. See
+[deploy/aws/README.md](deploy/aws/README.md).
+
+**Render** — `Dockerfile` and `render.yaml` are in the repo. **New → Blueprint**,
+point it at this repo, set `SUPABASE_URL` and `SUPABASE_SERVICE_KEY`. The
+service type is `worker`, a background process with no HTTP port, and Render
+restarts it if it exits. Note that Render has no free tier for workers.
 
 Railway and Fly.io take the same Dockerfile. A small VPS works too:
 
@@ -152,10 +157,26 @@ python run_live.py
 That is free and fine for testing, but it only trades while the machine is
 awake, and these rounds settle every 15 minutes.
 
-> Two caveats for any host. Open positions live in memory, so a restart
-> abandons them — they stay `open` in the database until manually resolved.
-> And `data/*.jsonl` is ephemeral on most hosts; Supabase is the book of
-> record, the JSONL is the local fallback.
+> One caveat for any host: `data/*.jsonl` is ephemeral on most of them.
+> Supabase is the book of record, the JSONL is the local fallback.
+
+#### Restarts
+
+Open positions live in the worker's memory, so a restart used to abandon them —
+they stayed `open` in the database, never settled and impossible to close from
+the panel. On a host with auto-deploy that is not an edge case; every push is a
+restart.
+
+So a starting worker now **adopts** any position left open by a run whose
+heartbeat has gone silent, reconstructs the cash those positions cost, and
+closes each one against the row it came from rather than writing a second row
+under the new run. `recover_open_positions: true` in `config.yaml`.
+
+Adoption waits for `adopt_stale_after_sec` (120s by default) of silence, which
+is what stops two workers from both settling the same trade and crediting the
+account twice. A position opened seconds before a restart is therefore picked up
+about two minutes later rather than instantly. **Run one worker at a time**; the
+staleness window is a safety net, not a lock.
 
 ### Vercel setup
 

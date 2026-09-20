@@ -40,6 +40,7 @@ class NullStore:
     def heartbeat(self, *a: Any, **k: Any) -> None: return None
     def finish_run(self, *a: Any, **k: Any) -> None: return None
     def pending_manual_orders(self, *a: Any, **k: Any) -> list: return []
+    def adoptable_positions(self, *a: Any, **k: Any) -> list: return []
     def adjust_account_balance(self, *a: Any, **k: Any) -> None: return None
     def resolve_manual_order(self, *a: Any, **k: Any) -> None: return None
 
@@ -117,10 +118,15 @@ class SupabaseStore:
         return self.run_id
 
     def upsert_position(self, pos: Dict[str, Any]) -> None:
-        if self.run_id is None:
+        # A position adopted from an abandoned run keeps that run's id, so the
+        # close lands on the original row. Stamping the current run instead
+        # would write a second row and leave the first one open forever -
+        # which is the orphan this is all meant to prevent.
+        run_id = pos.get("run_id") or self.run_id
+        if run_id is None:
             return
         row = {
-            "run_id": self.run_id,
+            "run_id": run_id,
             "position_id": pos["position_id"],
             "round_id": pos["round_id"],
             "symbol": pos["symbol"],
@@ -201,6 +207,61 @@ class SupabaseStore:
                     {"last_heartbeat": datetime.now(timezone.utc).isoformat(),
                      "cash": cash},
                     {"id": "eq.%d" % self.run_id})
+
+    # ---- recovery -------------------------------------------------------
+    def adoptable_positions(self, stale_after_sec: float = 120.0) -> List[Dict[str, Any]]:
+        """Open positions left behind by a worker that is no longer running.
+
+        Positions live in the worker's memory, so a restart, a redeploy or a
+        crash used to abandon them: still `open` in the table, never settled,
+        impossible to close from the panel. This finds them so a starting
+        worker can take them over.
+
+        A run that is still heartbeating owns its positions, and adopting those
+        would have two workers settling the same trade and crediting the
+        account twice. So a run counts as abandoned only once its heartbeat has
+        gone quiet - which a crash produces and a healthy worker never does.
+        """
+        try:
+            r = self.session.get("%s/positions" % self.base, timeout=self.timeout,
+                                 params={"status": "eq.open", "limit": "500"})
+            if r.status_code >= 400:
+                self._note_failure("adoptable positions -> %s" % r.status_code)
+                return []
+            rows = r.json() or []
+        except Exception as exc:  # noqa: BLE001
+            self._note_failure("adoptable positions -> %s" % exc)
+            return []
+        if not rows:
+            return []
+
+        try:
+            q = self.session.get("%s/runs" % self.base, timeout=self.timeout,
+                                 params={"select": "id,last_heartbeat", "limit": "500"})
+            beats = {row["id"]: row.get("last_heartbeat")
+                     for row in (q.json() or [])} if q.status_code < 400 else {}
+        except Exception as exc:  # noqa: BLE001
+            self._note_failure("runs heartbeat -> %s" % exc)
+            return []
+
+        now = datetime.now(timezone.utc)
+        out = []
+        for row in rows:
+            rid = row.get("run_id")
+            if rid == self.run_id:
+                continue
+            beat = beats.get(rid)
+            if beat:
+                try:
+                    seen = datetime.fromisoformat(str(beat).replace("Z", "+00:00"))
+                    if seen.tzinfo is None:
+                        seen = seen.replace(tzinfo=timezone.utc)
+                    if (now - seen).total_seconds() < stale_after_sec:
+                        continue  # another worker is alive and owns this
+                except ValueError:
+                    pass
+            out.append(row)
+        return out
 
     # ---- manual orders from the trade panel -----------------------------
     def pending_manual_orders(self) -> List[Dict[str, Any]]:

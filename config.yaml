@@ -7,6 +7,12 @@
 run_name: default
 data_dir: data
 
+# Take over positions a previous worker left open, so a restart or redeploy
+# does not strand them as `open` forever. A run is treated as abandoned only
+# once its heartbeat has been silent this long, so a live worker keeps its own.
+recover_open_positions: true
+adopt_stale_after_sec: 120
+
 api:
   base_url: https://api.delta.exchange   # global.delta.exchange; binaries are NOT on the India host
   underlying: BTC                        # BTC or ETH

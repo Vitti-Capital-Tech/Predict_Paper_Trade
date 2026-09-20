@@ -140,6 +140,15 @@ class Config:
     data_dir: str = "data"
     run_name: str = "default"
 
+    # On startup, take over positions a previous worker left open. Hosting
+    # makes restarts routine - every redeploy is one - and without this each
+    # restart strands whatever was open at the time.
+    recover_open_positions: bool = True
+    # How long a run's heartbeat must have been silent before its positions
+    # count as abandoned. Must comfortably exceed the poll interval, or a live
+    # worker's positions could be adopted out from under it.
+    adopt_stale_after_sec: float = 120.0
+
     # ---- max entry prices derived from the odds convention -------------
     def max_price_for_odds(self, odds: float) -> float:
         if self.entry.odds_convention == "risk_reward":

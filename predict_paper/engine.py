@@ -37,6 +37,17 @@ class Engine:
             log.warning("could not register run in Supabase: %s", exc)
         self.portfolio = Portfolio(cfg.portfolio, cfg.data_dir, cfg.run_name,
                                    store=self.store)
+        # Positions live in memory, so anything still open when the last worker
+        # stopped is stranded until someone picks it up. Do that before the
+        # first poll, so settlement and the panel's Close button reach it.
+        if cfg.recover_open_positions:
+            try:
+                rows = self.store.adoptable_positions(cfg.adopt_stale_after_sec)
+                n = self.portfolio.adopt(rows)
+                if n:
+                    log.info("adopted %d open position(s) from earlier runs", n)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("could not recover open positions: %s", exc)
         self.atr_gate = AtrGate(
             self.client, cfg.atr.candle_symbol, cfg.atr.resolution,
             cfg.atr.period, cfg.atr.min_atr, cfg.atr.refresh_sec, cfg.atr.enabled)
