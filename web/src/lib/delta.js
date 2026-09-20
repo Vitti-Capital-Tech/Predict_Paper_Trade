@@ -30,12 +30,38 @@ export async function fetchSpotTicker(symbol = 'BTCUSDT') {
   if (!t) return null
   return {
     symbol: t.symbol,
+    // spot_price is the index, and it is the only live field here: `close` is
+    // the perpetual's last *trade*, which on a quiet book sits unchanged for
+    // minutes. Sampled six times two seconds apart, spot_price moved every
+    // time (81223.2 -> 81224.0) and close never left 81189.0.
     spot: Number(t.spot_price ?? t.close),
     last: Number(t.close),
-    changePct: Number(t.mark_change_24h ?? t.ltp_change_24h ?? 0),
-    high24h: Number(t.high),
-    low24h: Number(t.low),
+    // Delta's own header shows ltp_change_24h. We were showing
+    // mark_change_24h, which is a different basis and read -0.21% against
+    // their -0.12% at the same instant.
+    changePct: Number(t.ltp_change_24h ?? t.mark_change_24h ?? 0),
     turnover: Number(t.turnover ?? 0),
+  }
+}
+
+/**
+ * 24h high and low of the spot index.
+ *
+ * Not the ticker's `high`/`low`: those belong to the BTCUSDT perpetual, while
+ * the header price, the chart and settlement are all the index. The two ranges
+ * genuinely differ — perp 81,420.00/80,143.50 against index 81,494.30/80,124.40
+ * — so the 1d chart could print a high above the figure the header called the
+ * 24h high.
+ */
+export async function fetchDailyRange(symbol) {
+  const end = Math.floor(Date.now() / 1000)
+  const rows = await get('/v2/history/candles', {
+    symbol, resolution: '1h', start: end - 24 * 3600, end,
+  })
+  if (!rows?.length) return null
+  return {
+    high24h: Math.max(...rows.map((c) => Number(c.high))),
+    low24h: Math.min(...rows.map((c) => Number(c.low))),
   }
 }
 

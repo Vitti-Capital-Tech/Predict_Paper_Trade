@@ -3,7 +3,7 @@ import {
   fetchBinaryTickers, fetchCandles, fetchSpotTicker,
   buildRounds, legFor, sizeOrder, availableAssets, spotSymbolFor,
   RESOLUTIONS, lookbackHoursFor, barResolutionFor, indexSymbolFor,
-  mergeLiveBar, fetchOrderbook, previewOrder, topOfBook,
+  mergeLiveBar, fetchOrderbook, previewOrder, topOfBook, fetchDailyRange,
 } from '../lib/delta'
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
 import { parseRoute, formatRoute, writeRoute, onRouteChange } from '../lib/route'
@@ -71,6 +71,7 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
   const [resolution, setResolution] = useState('15m')
   const [rounds, setRounds] = useState([])
   const [spotTicker, setSpotTicker] = useState(null)
+  const [dailyRange, setDailyRange] = useState(null)
   const [error, setError] = useState(null)
   const [expiryCode, setExpiryCode] = useState(initial?.expiryCode ?? null)
   const [strike, setStrike] = useState(initial?.strike ?? null)
@@ -121,6 +122,18 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  // 24h range of the index, which is what the chart plots and what settles.
+  // Slow poll: a daily high does not move often enough to justify more.
+  useEffect(() => {
+    let alive = true
+    const load = () => fetchDailyRange(indexSymbolFor(asset))
+      .then((r) => alive && setDailyRange(r))
+      .catch(() => {})
+    load()
+    const t = setInterval(load, 60000)
+    return () => { alive = false; clearInterval(t) }
+  }, [asset])
 
   // A different underlying has different strikes and expiries. Keyed off the
   // previous value rather than a "first render" flag: StrictMode runs effects
@@ -387,10 +400,10 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
         </div>
 
         <div className="flex items-center gap-4">
-          {spotTicker && (
+          {dailyRange && (
             <div className="nums hidden gap-4 text-[11px] text-slate-500 sm:flex">
-              <span>24h H <span className="text-slate-300">{money(spotTicker.high24h)}</span></span>
-              <span>24h L <span className="text-slate-300">{money(spotTicker.low24h)}</span></span>
+              <span>24h H <span className="text-slate-300">{money(dailyRange.high24h)}</span></span>
+              <span>24h L <span className="text-slate-300">{money(dailyRange.low24h)}</span></span>
             </div>
           )}
           <span className={`nums text-lg font-semibold ${
