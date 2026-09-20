@@ -253,3 +253,108 @@ export function sizeOrder(investment, price) {
     payout: contracts * 1.0,
   }
 }
+
+// ------------------------------------------------------------- depth ----
+
+/**
+ * L2 order book for one contract.
+ *
+ * The ticker's `best_ask` is the price of the *first* contract, not of your
+ * order. On these wings the difference is not a rounding error: a put quoted
+ * at 0.031 can average 0.96 once a few hundred contracts walk past the handful
+ * of resting offers. Pricing the panel off the touch is what made an order look
+ * like $25 and come back rejected at $777.
+ */
+export function fetchOrderbook(symbol) {
+  return get(`/v2/l2orderbook/${symbol}`)
+}
+
+/**
+ * Walk `qty` contracts through the book. Mirrors `walk_book` in
+ * predict_paper/fills.py — deliberately, level for level, because a preview
+ * that disagrees with the worker is worse than no preview at all.
+ *
+ * side 'buy' consumes asks (book.sell); 'sell' consumes bids (book.buy).
+ */
+export function walkBook(book, side, qty, maxLevels = 20) {
+  const key = side === 'buy' ? 'sell' : 'buy'
+  const levels = (book?.[key] ?? [])
+    .slice(0, maxLevels)
+    .map((l) => [Number(l.price), Number(l.size)])
+    .filter(([price, size]) => Number.isFinite(price) && size > 0)
+    .sort((a, b) => (side === 'sell' ? b[0] - a[0] : a[0] - b[0]))
+
+  if (!levels.length) return { filled: false, reason: `no ${key} liquidity` }
+
+  let remaining = qty
+  let cost = 0
+  let consumed = 0
+  for (const [price, size] of levels) {
+    if (remaining <= 0) break
+    const take = Math.min(remaining, size)
+    cost += take * price
+    remaining -= take
+    consumed += 1
+  }
+
+  const got = qty - remaining
+  const top = levels[0][0]
+  const available = levels.reduce((n, [, size]) => n + size, 0)
+
+  // allow_partial is false in the worker, so short depth is a rejection there
+  // and must read as one here.
+  if (got <= 0) return { filled: false, reason: 'book empty', top, available }
+  if (remaining > 0) {
+    return {
+      filled: false,
+      reason: `insufficient depth (${Math.floor(available)}/${Math.round(qty)} available)`,
+      top, available, partialAvg: cost / got,
+    }
+  }
+
+  const avg = cost / got
+  return {
+    filled: true,
+    qty: got,
+    avgPrice: avg,
+    top,
+    available,
+    levels: consumed,
+    slippage: side === 'buy' ? avg - top : top - avg,
+  }
+}
+
+/**
+ * What this order would actually do, priced against real depth.
+ *
+ * Sizing follows the worker: contracts are set from the touch price, then that
+ * many contracts are walked through the book. Sizing off the walked price
+ * instead would be circular, and would not match the fill.
+ */
+export function previewOrder(book, investment, touchPrice, tolerance) {
+  const sized = sizeOrder(investment, touchPrice)
+  if (!sized.contracts) return { ok: false, reason: 'no quote', ...sized }
+  if (!book) return { ok: true, pending: true, ...sized, price: touchPrice }
+
+  const walk = walkBook(book, 'buy', sized.contracts)
+  if (!walk.filled) {
+    return { ok: false, reason: walk.reason, contracts: sized.contracts,
+             available: walk.available, invested: 0, payout: 0 }
+  }
+
+  const slippage = walk.avgPrice - Number(touchPrice)
+  return {
+    ok: slippage <= tolerance,
+    reason: slippage > tolerance
+      ? `slippage $${slippage.toFixed(4)} exceeds your $${Number(tolerance).toFixed(2)} tolerance`
+      : '',
+    contracts: walk.qty,
+    price: walk.avgPrice,
+    touch: Number(touchPrice),
+    slippage,
+    levels: walk.levels,
+    available: walk.available,
+    invested: walk.qty * walk.avgPrice,
+    payout: walk.qty * 1.0,
+  }
+}

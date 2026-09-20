@@ -3,7 +3,7 @@ import {
   fetchBinaryTickers, fetchCandles, fetchSpotTicker,
   buildRounds, legFor, sizeOrder, availableAssets, spotSymbolFor,
   RESOLUTIONS, lookbackHoursFor, barResolutionFor, indexSymbolFor,
-  mergeLiveBar,
+  mergeLiveBar, fetchOrderbook, previewOrder,
 } from '../lib/delta'
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
 import { parseRoute, formatRoute, writeRoute, onRouteChange } from '../lib/route'
@@ -79,6 +79,7 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
   const [showTwap, setShowTwap] = useState(true)
   const [now, setNow] = useState(Date.now())
   const [placing, setPlacing] = useState(null)
+  const [books, setBooks] = useState({})
   const [orders, setOrders] = useState([])
   const [ordersOffline, setOrdersOffline] = useState(false)
   const [toast, setToast] = useState(null)
@@ -216,14 +217,41 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
   const yesLeg = round && strike !== null ? legFor(round, strike, 'call') : null
   const noLeg = round && strike !== null ? legFor(round, strike, 'put') : null
 
+  // Depth for the two legs on screen. Only the selected strike is polled, so
+  // this is two requests a tick rather than one per contract in the round.
+  const yesSymbol = yesLeg?.symbol ?? null
+  const noSymbol = noLeg?.symbol ?? null
+  useEffect(() => {
+    if (!yesSymbol && !noSymbol) return
+    let alive = true
+    const tick = () => {
+      for (const sym of [yesSymbol, noSymbol]) {
+        if (!sym) continue
+        fetchOrderbook(sym)
+          .then((b) => alive && setBooks((prev) => ({ ...prev, [sym]: b })))
+          .catch(() => {})
+      }
+    }
+    tick()
+    const t = setInterval(tick, 2000)
+    return () => { alive = false; clearInterval(t) }
+  }, [yesSymbol, noSymbol])
+
   const secondsLeft = round?.expiry ? (round.expiry.getTime() - now) / 1000 : null
   const expired = secondsLeft !== null && secondsLeft <= 0
   const halted = secondsLeft !== null && secondsLeft > 0
     && secondsLeft <= TRADING_HALT_SEC
   const nextLiveRound = rounds.find((r) => r.expiry && r.expiry.getTime() > now) ?? null
 
-  const yesSize = sizeOrder(investment, yesLeg?.ask)
-  const noSize = sizeOrder(investment, noLeg?.ask)
+  // What the order would actually do, walked through real depth. The touch
+  // price is the price of the first contract, not of your order; on a thin
+  // wing those differ by more than the contract is worth.
+  const yesSize = useMemo(
+    () => previewOrder(books[yesLeg?.symbol], investment, yesLeg?.ask, slippage),
+    [books, yesLeg?.symbol, yesLeg?.ask, investment, slippage])
+  const noSize = useMemo(
+    () => previewOrder(books[noLeg?.symbol], investment, noLeg?.ask, slippage),
+    [books, noLeg?.symbol, noLeg?.ask, investment, slippage])
 
   const yesVol = Number(yesLeg?.volUsd ?? 0)
   const noVol = Number(noLeg?.volUsd ?? 0)
@@ -242,7 +270,13 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
   async function submit(outcome) {
     const leg = outcome === 'yes' ? yesLeg : noLeg
     const size = outcome === 'yes' ? yesSize : noSize
-    if (!leg || !leg.ask || expired || halted || size.contracts < 1) return
+    if (!leg || !leg.ask || expired || halted || !(size.contracts >= 1)) return
+    // The preview already walked the book; if it says this cannot fill, the
+    // worker would only reject it a second later.
+    if (!size.ok && !size.pending) {
+      setToast({ kind: 'err', msg: size.reason })
+      return
+    }
     if (account && size.invested > Number(account.balance)) {
       setToast({ kind: 'err',
                  msg: `Not enough balance: needs ${money(size.invested)}, have ${money(account.balance)}.` })
@@ -258,6 +292,9 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
         strike: leg.strike,
         investment: Number(investment),
         slippageTolerance: Number(slippage),
+        // Deliberately the touch, not the walked price. The worker measures
+        // drift against this; sending the walked price would make drift ~0 and
+        // silently disable the tolerance that just blocked a $749 fill.
         quotedPrice: leg.ask,
         accountId: account?.id ?? null,
       })
@@ -519,30 +556,57 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-3">
-              {sides.map(({ key, leg, size, btn }) => (
-                <div key={key}>
-                  <button
-                    onClick={() => submit(key)}
-                    disabled={expired || halted || !round || !leg?.ask
-                              || placing !== null || size.contracts < 1}
-                    className={`w-full rounded-lg border py-3 text-center transition-colors
-                                disabled:cursor-not-allowed disabled:opacity-40 ${btn}`}
-                  >
-                    <span className="block text-sm font-bold tracking-wide text-white">
-                      {key.toUpperCase()}
-                    </span>
-                    <span className="nums block text-xs text-white/90">
-                      {placing === key ? 'placing…' : priceLabel(leg?.ask)}
-                    </span>
-                  </button>
-                  <p className="nums mt-1.5 text-center text-[11px] text-slate-500">
-                    You Invest: {money(size.invested)}
-                  </p>
-                  <p className="nums text-center text-[11px] text-slate-500">
-                    Payout: <span className="text-slate-300">{money(size.payout)}</span>
-                  </p>
-                </div>
-              ))}
+              {sides.map(({ key, leg, size, btn }) => {
+                // A preview that cannot fill is the rejection the worker would
+                // send back, shown before the click instead of after it.
+                const blocked = !size.ok && !size.pending
+                const slipped = size.ok && size.slippage > 0.0005
+                return (
+                  <div key={key}>
+                    <button
+                      onClick={() => submit(key)}
+                      disabled={expired || halted || !round || !leg?.ask
+                                || placing !== null || blocked
+                                || !(size.contracts >= 1)}
+                      className={`w-full rounded-lg border py-3 text-center transition-colors
+                                  disabled:cursor-not-allowed disabled:opacity-40 ${btn}`}
+                    >
+                      <span className="block text-sm font-bold tracking-wide text-white">
+                        {key.toUpperCase()}
+                      </span>
+                      <span className="nums block text-xs text-white/90">
+                        {placing === key ? 'placing…' : priceLabel(size.price ?? leg?.ask)}
+                      </span>
+                    </button>
+
+                    {/* The touch price, kept visible when your size does not
+                        get it — otherwise the real number looks like an error. */}
+                    {slipped && (
+                      <p className="nums mt-1 text-center text-[10px] text-amber-400/90"
+                         title={`Only part of your size fills at the quoted $${size.touch?.toFixed(3)}; this walks ${size.levels} levels of the book.`}>
+                        touch {priceLabel(size.touch)} · +{money(size.slippage, 3)} depth
+                      </p>
+                    )}
+
+                    <p className="nums mt-1.5 text-center text-[11px] text-slate-500">
+                      You Invest: {money(size.invested)}
+                    </p>
+                    <p className="nums text-center text-[11px] text-slate-500">
+                      Payout: <span className="text-slate-300">{money(size.payout)}</span>
+                    </p>
+                    <p className="nums text-center text-[11px] text-slate-600">
+                      {size.contracts >= 1 ? `${Math.round(size.contracts)} contracts` : '—'}
+                    </p>
+
+                    {blocked && (
+                      <p className="mt-1.5 rounded border border-rose-500/25 bg-rose-500/10
+                                    px-2 py-1 text-center text-[10px] leading-snug text-rose-300">
+                        {size.reason}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
             </div>
 
             {toast && (
