@@ -26,6 +26,12 @@ echo "==> service user"
 id -u predict >/dev/null 2>&1 || useradd --system --home "$DIR" --shell /usr/sbin/nologin predict
 
 echo "==> code at $DIR"
+# The tree is owned by the service user but these commands run as root, and
+# git refuses to touch a repo it thinks belongs to someone else. Without this
+# the update path fails on the very first fetch — silently, if the caller is
+# piping output — and restarts the worker on unchanged code.
+git config --global --add safe.directory "$DIR" 2>/dev/null || true
+
 if [ -d "$DIR/.git" ]; then
   git -C "$DIR" fetch --quiet origin main
   git -C "$DIR" reset --hard --quiet origin/main
