@@ -3,7 +3,7 @@ import {
   fetchBinaryTickers, fetchCandles, fetchSpotTicker,
   buildRounds, legFor, sizeOrder, availableAssets, spotSymbolFor,
   RESOLUTIONS, lookbackHoursFor, barResolutionFor, indexSymbolFor,
-  mergeLiveBar, fetchOrderbook, previewOrder,
+  mergeLiveBar, fetchOrderbook, previewOrder, topOfBook,
 } from '../lib/delta'
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
 import { parseRoute, formatRoute, writeRoute, onRouteChange } from '../lib/route'
@@ -266,15 +266,23 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
     && secondsLeft <= TRADING_HALT_SEC
   const nextLiveRound = rounds.find((r) => r.expiry && r.expiry.getTime() > now) ?? null
 
-  // What the order would actually do, walked through real depth. The touch
-  // price is the price of the first contract, not of your order; on a thin
+  // Quote off the book, not the ticker. /v2/tickers trails /v2/l2orderbook by
+  // seconds, and quoting the stale one while the worker fills against the
+  // fresh one shows phantom slippage and rejects good orders.
+  const yesBook = books[yesLeg?.symbol]
+  const noBook = books[noLeg?.symbol]
+  const yesAsk = topOfBook(yesBook, 'buy') ?? yesLeg?.ask ?? null
+  const noAsk = topOfBook(noBook, 'buy') ?? noLeg?.ask ?? null
+
+  // What the order would actually do, walked through real depth. The top of
+  // book is the price of the first contract, not of your order; on a thin
   // wing those differ by more than the contract is worth.
   const yesSize = useMemo(
-    () => previewOrder(books[yesLeg?.symbol], investment, yesLeg?.ask, slippage),
-    [books, yesLeg?.symbol, yesLeg?.ask, investment, slippage])
+    () => previewOrder(yesBook, investment, yesAsk, slippage),
+    [yesBook, yesAsk, investment, slippage])
   const noSize = useMemo(
-    () => previewOrder(books[noLeg?.symbol], investment, noLeg?.ask, slippage),
-    [books, noLeg?.symbol, noLeg?.ask, investment, slippage])
+    () => previewOrder(noBook, investment, noAsk, slippage),
+    [noBook, noAsk, investment, slippage])
 
   const yesVol = Number(yesLeg?.volUsd ?? 0)
   const noVol = Number(noLeg?.volUsd ?? 0)
@@ -293,7 +301,8 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
   async function submit(outcome) {
     const leg = outcome === 'yes' ? yesLeg : noLeg
     const size = outcome === 'yes' ? yesSize : noSize
-    if (!leg || !leg.ask || expired || halted || !(size.contracts >= 1)) return
+    const ask = outcome === 'yes' ? yesAsk : noAsk
+    if (!leg || !ask || expired || halted || !(size.contracts >= 1)) return
     // The preview already walked the book; if it says this cannot fill, the
     // worker would only reject it a second later.
     if (!size.ok && !size.pending) {
@@ -315,10 +324,11 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
         strike: leg.strike,
         investment: Number(investment),
         slippageTolerance: Number(slippage),
-        // Deliberately the touch, not the walked price. The worker measures
-        // drift against this; sending the walked price would make drift ~0 and
-        // silently disable the tolerance that just blocked a $749 fill.
-        quotedPrice: leg.ask,
+        // The top of book we actually showed, not the walked price and not
+        // the ticker. The worker measures drift against this, so it has to be
+        // the same number the user saw, from the same feed the worker fills
+        // against - otherwise the tolerance measures feed lag, not slippage.
+        quotedPrice: ask,
         accountId: account?.id ?? null,
       })
       watching.current = queued?.id ?? null
@@ -592,12 +602,12 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
                 // A preview that cannot fill is the rejection the worker would
                 // send back, shown before the click instead of after it.
                 const blocked = !size.ok && !size.pending
-                const slipped = size.ok && size.slippage > 0.0005
+                const slipped = size.slippage > 0.0005 && size.touch
                 return (
                   <div key={key}>
                     <button
                       onClick={() => submit(key)}
-                      disabled={expired || halted || !round || !leg?.ask
+                      disabled={expired || halted || !round || !size.price
                                 || placing !== null || blocked
                                 || !(size.contracts >= 1)}
                       className={`w-full rounded-lg border py-3 text-center transition-colors
@@ -607,7 +617,7 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
                         {key.toUpperCase()}
                       </span>
                       <span className="nums block text-xs text-white/90">
-                        {placing === key ? 'placing…' : priceLabel(size.price ?? leg?.ask)}
+                        {placing === key ? 'placing…' : priceLabel(size.price)}
                       </span>
                     </button>
 
@@ -616,7 +626,7 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
                     {slipped && (
                       <p className="nums mt-1 text-center text-[10px] text-amber-400/90"
                          title={`Only part of your size fills at the quoted $${size.touch?.toFixed(3)}; this walks ${size.levels} levels of the book.`}>
-                        touch {priceLabel(size.touch)} · +{money(size.slippage, 3)} depth
+                        book {priceLabel(size.touch)} · +{money(size.slippage, 3)} depth
                       </p>
                     )}
 

@@ -22,6 +22,27 @@ from .strategy import Strategy
 log = logging.getLogger(__name__)
 
 
+def _top_of_book(book, side: str):
+    """Best price actually resting in the book.
+
+    The ticker feed lags the book by seconds, which matters here because the
+    fill walks the book: quoting one and filling from the other turns latency
+    into phantom slippage.
+    """
+    levels = (book or {}).get("sell" if side == "buy" else "buy") or []
+    prices = []
+    for lvl in levels:
+        try:
+            price = float(lvl["price"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if price > 0:
+            prices.append(price)
+    if not prices:
+        return None
+    return min(prices) if side == "buy" else max(prices)
+
+
 class Engine:
     def __init__(self, cfg, client: Optional[DeltaClient] = None, store=None):
         self.cfg = cfg
@@ -266,7 +287,13 @@ class Engine:
                     oid, "rejected", reject_reason="already holding this contract")
                 continue
 
-            ask = contract.best_ask
+            # Size off the book, not the ticker. /v2/tickers trails
+            # /v2/l2orderbook by seconds, so sizing from `best_ask` produced a
+            # contract count for a price that no longer existed - and then the
+            # slippage check measured that feed lag rather than real depth and
+            # rejected orders that would have filled.
+            book = self._book(symbol)
+            ask = _top_of_book(book, "buy") or contract.best_ask
             if ask is None or ask <= 0:
                 self.store.resolve_manual_order(
                     oid, "rejected", reject_reason="no ask quoted")
@@ -283,7 +310,6 @@ class Engine:
                                   % (investment, ask))
                 continue
 
-            book = self._book(symbol)
             fill = self.fills.simulate("buy", qty, book, contract.best_bid,
                                        contract.best_ask, contract.mark_price)
             if not fill.filled:

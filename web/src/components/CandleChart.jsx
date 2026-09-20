@@ -34,16 +34,45 @@ const COLORS = {
   time: '#8290a6',
 }
 
+// Minutes in the rolling TWAP.
+//
+// Delta does not publish the settlement window, so this is calibrated rather
+// than quoted: with their tag at 81,178.08 against a spot of 81,175.70, only a
+// very short window fits — a 2-minute rolling mean landed $5.60 away while 5
+// minutes was $48 away and 15 was $69. Two minutes it is, and the constant is
+// here so it can be re-fitted rather than hunted for.
+const TWAP_MINUTES = 2
+
 /**
- * Time-weighted average price across the window, from each bar's typical
- * price. Delta settles on a TWAP of the final moments, so this is what the
- * TWAP toggle reveals.
+ * Rolling time-weighted average price, from each bar's typical price.
+ *
+ * Previously this was a cumulative mean from the left edge of the chart, which
+ * made the number a property of whichever timeframe button was pressed: the
+ * same instant read 81,246 on the 15m view and something else entirely on 1d.
+ * Delta's TWAP is a trailing average — it tracks spot a couple of dollars
+ * behind — and it is the mechanism the contract settles on, so it cannot
+ * depend on how the viewer is looking at the chart.
  */
-function twapSeries(rows) {
+function barSecondsOf(rows) {
+  if (!rows || rows.length < 2) return 60
+  const gaps = []
+  for (let i = 1; i < rows.length; i += 1) {
+    const d = rows[i].time - rows[i - 1].time
+    if (d > 0) gaps.push(d)
+  }
+  if (!gaps.length) return 60
+  gaps.sort((a, b) => a - b)
+  return gaps[Math.floor(gaps.length / 2)]  // median resists a gap in the feed
+}
+
+function twapSeries(rows, barSeconds = 60) {
+  const span = Math.max(1, Math.round((TWAP_MINUTES * 60) / barSeconds))
+  const typical = rows.map((c) => (c.high + c.low + c.close) / 3)
   let sum = 0
   return rows.map((c, i) => {
-    sum += (c.high + c.low + c.close) / 3
-    return { time: c.time, value: sum / (i + 1) }
+    sum += typical[i]
+    if (i >= span) sum -= typical[i - span]
+    return { time: c.time, value: sum / Math.min(i + 1, span) }
   })
 }
 
@@ -78,7 +107,7 @@ export default function CandleChart({
     const PAD_T = chartType === 'candles' ? 26 : 12
     const PAD_B = 6
 
-    const twap = twapSeries(rows)
+    const twap = twapSeries(rows, barSecondsOf(rows))
 
     let max = Math.max(...rows.map((c) => c.high))
     let min = Math.min(...rows.map((c) => c.low))

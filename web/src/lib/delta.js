@@ -270,6 +270,26 @@ export function fetchOrderbook(symbol) {
 }
 
 /**
+ * Best price from the book — and the one to trust.
+ *
+ * `/v2/tickers` lags `/v2/l2orderbook` by roughly 1.5-4.5 seconds. Measured
+ * on a live wing: the book moved 0.542 -> 0.732 and the ticker still read
+ * 0.542 six seconds later. Quoting the ticker while the worker fills against
+ * the book turns that lag into phantom "slippage" and rejects orders that
+ * would have been fine, so the panel prices off the book and keeps the ticker
+ * for the things it is still good for - spot, 24h stats, open interest.
+ */
+export function topOfBook(book, side = 'buy') {
+  const levels = book?.[side === 'buy' ? 'sell' : 'buy']
+  if (!levels?.length) return null
+  const prices = levels
+    .map((l) => Number(l.price))
+    .filter((v) => Number.isFinite(v) && v > 0)
+  if (!prices.length) return null
+  return side === 'buy' ? Math.min(...prices) : Math.max(...prices)
+}
+
+/**
  * Walk `qty` contracts through the book. Mirrors `walk_book` in
  * predict_paper/fills.py — deliberately, level for level, because a preview
  * that disagrees with the worker is worse than no preview at all.

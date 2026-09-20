@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   fetchAccountPositions, fetchRecentCloses, placeManualClose,
 } from '../lib/supabase'
-import { fetchBinaryTickers } from '../lib/delta'
+import { fetchOrderbook, walkBook } from '../lib/delta'
 
 /**
  * Positions / Recent Trades, laid out like Delta's Predict portfolio cards.
@@ -70,14 +70,20 @@ function CardHead({ p, status, tone }) {
   )
 }
 
-function OpenCard({ p, mark, close, onClose, busy }) {
+function OpenCard({ p, mark, close, onClose, busy, tolerance }) {
   const invested = Number(p.entry_price) * Number(p.qty)
-  const value = mark === null || mark === undefined
-    ? null : Number(mark) * Number(p.qty)
+  const exitPrice = mark?.ok ? mark.price : null
+  const value = exitPrice === null ? null : exitPrice * Number(p.qty)
   const unreal = value === null ? null : value - invested
 
   const pending = close?.status === 'pending' || busy
   const rejected = close?.status === 'rejected' ? close.reject_reason : null
+  // How far the book's bid for your whole size sits below its top. Shown for
+  // the same reason as on the buy side: the top is the price of one contract.
+  const depthCost = mark?.ok && mark.top ? mark.top - mark.price : 0
+  // The worker compares this same figure against the tolerance, so refuse it
+  // here instead of letting the click bounce back as a rejection.
+  const tooDeep = depthCost > tolerance
 
   return (
     <Card>
@@ -107,11 +113,11 @@ function OpenCard({ p, mark, close, onClose, busy }) {
       </div>
 
       <button
-        onClick={() => onClose(p, mark)}
-        disabled={pending || mark === null || mark === undefined}
-        title={mark === null || mark === undefined
-          ? 'No bid quoted — nothing to sell into'
-          : 'Sell at the market. The worker walks the real book, so the price you get may be below the bid shown.'}
+        onClick={() => onClose(p, mark?.top)}
+        disabled={pending || exitPrice === null || tooDeep}
+        title={exitPrice === null
+          ? (mark?.reason ?? 'No bid quoted — nothing to sell into')
+          : `Sells ${Number(p.qty).toLocaleString('en-US')} contracts into the book at an average of ${Number(exitPrice).toFixed(4)}.`}
         className="mt-3 w-full rounded-lg border border-white/10 bg-ink-700 py-2 text-xs
                    font-medium text-slate-200 transition-colors hover:border-white/25
                    hover:bg-ink-600 disabled:cursor-not-allowed disabled:opacity-40"
@@ -120,6 +126,27 @@ function OpenCard({ p, mark, close, onClose, busy }) {
           ? 'Closing…'
           : value === null ? 'Close' : `Close at ${money(value)}`}
       </button>
+
+      {depthCost > 0.0005 && !tooDeep && (
+        <p className="nums mt-1 text-center text-[10px] text-amber-400/90">
+          book {money(mark.top, 3)}/contract · −{money(depthCost, 3)} depth on this size
+        </p>
+      )}
+
+      {tooDeep && (
+        <p className="nums mt-1.5 rounded border border-rose-500/25 bg-rose-500/10 px-2 py-1
+                      text-center text-[10px] leading-snug text-rose-300">
+          selling this size costs {money(depthCost, 4)}/contract in depth, over your{' '}
+          {money(tolerance)} tolerance — raise it, or hold to settlement
+        </p>
+      )}
+
+      {!mark?.ok && mark?.reason && (
+        <p className="mt-1.5 rounded border border-amber-500/25 bg-amber-500/10 px-2 py-1
+                      text-center text-[10px] text-amber-300">
+          {mark.reason}
+        </p>
+      )}
 
       {rejected && (
         <p className="mt-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-2.5 py-1.5
@@ -213,24 +240,43 @@ export default function PortfolioTabs({ accountId, slippage = 0.05, refreshKey =
   // A fill just landed; don't make the user wait for the next tick.
   useEffect(() => { if (refreshKey) load() }, [refreshKey, load])
 
-  // Live marks so open positions can show a current value.
+  // What each open position is actually worth, walked through the book for
+  // its own size. The ticker's best_bid is both stale and top-of-book only, so
+  // "Close at $4.85" was a price the book would not have paid — the same
+  // mistake the YES/NO buttons used to make, and the reason a close could come
+  // back rejected for slippage the panel never showed.
+  const openSymbols = useMemo(
+    () => [...new Set(positions.filter((p) => p.status === 'open')
+      .map((p) => `${p.symbol}|${p.qty}`))].join(','),
+    [positions])
+
   useEffect(() => {
+    if (!openSymbols) { setMarks({}); return }
     let alive = true
-    const tick = () => fetchBinaryTickers()
-      .then((rows) => {
-        if (!alive) return
-        const next = {}
-        for (const r of rows ?? []) {
-          const bid = r?.quotes?.best_bid
-          if (bid !== null && bid !== undefined) next[r.symbol] = Number(bid)
-        }
-        setMarks(next)
-      })
-      .catch(() => {})
+    const wanted = openSymbols.split(',').map((s) => {
+      const [symbol, qty] = s.split('|')
+      return { symbol, qty: Number(qty) }
+    })
+    const tick = () => {
+      for (const { symbol, qty } of wanted) {
+        fetchOrderbook(symbol)
+          .then((book) => {
+            if (!alive) return
+            const walk = walkBook(book, 'sell', qty)
+            setMarks((prev) => ({
+              ...prev,
+              [symbol]: walk.filled
+                ? { price: walk.avgPrice, top: walk.top, ok: true }
+                : { price: null, ok: false, reason: walk.reason },
+            }))
+          })
+          .catch(() => {})
+      }
+    }
     tick()
-    const t = setInterval(tick, 5000)
+    const t = setInterval(tick, 2500)
     return () => { alive = false; clearInterval(t) }
-  }, [])
+  }, [openSymbols])
 
   // Close orders in flight. Stops polling once the column turns out to be
   // missing, so an un-run migration is one failed request rather than one
@@ -268,7 +314,7 @@ export default function PortfolioTabs({ accountId, slippage = 0.05, refreshKey =
     return () => clearInterval(t)
   }, [loadCloses, closesOffline])
 
-  const requestClose = useCallback(async (p, mark) => {
+  const requestClose = useCallback(async (p, quoted) => {
     const pid = p.position_id
     setBusy((prev) => ({ ...prev, [pid]: true }))
     try {
@@ -276,7 +322,10 @@ export default function PortfolioTabs({ accountId, slippage = 0.05, refreshKey =
         positionId: pid,
         symbol: p.symbol,
         roundId: p.round_id,
-        quotedPrice: mark ?? null,
+        // Top of book, not the walked average. The worker measures drift
+        // against this; sending the walked price would make drift ~0 and
+        // disable the tolerance check entirely.
+        quotedPrice: quoted ?? null,
         slippageTolerance: slippage,
         accountId,
       })
@@ -353,6 +402,7 @@ export default function PortfolioTabs({ accountId, slippage = 0.05, refreshKey =
                   mark={marks[p.symbol]}
                   close={closes[p.position_id]}
                   busy={Boolean(busy[p.position_id])}
+                  tolerance={slippage}
                   onClose={requestClose}
                 />
               : <ClosedCard key={p.id ?? p.position_id} p={p} />
