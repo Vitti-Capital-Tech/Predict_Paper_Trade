@@ -136,6 +136,7 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [missing, setMissing] = useState(false)
+  const [orphan, setOrphan] = useState(false)
   const [open, setOpen] = useState(false)
 
   const accountId = account?.id ?? null
@@ -148,7 +149,11 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
     if (!accountId) return
     fetchStrategyConfig(accountId)
       .then((row) => {
-        if (!row) return
+        // An account with no settings row. The trigger from migration 010
+        // makes this impossible for new accounts, but say so rather than
+        // spinning on "Loading" forever if one slips through.
+        if (!row) { setOrphan(true); return }
+        setOrphan(false)
         setSaved(row)
         // Never clobber an edit in progress with a poll.
         setDraft((d) => d ?? row)
@@ -200,6 +205,19 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
           supabase/migrations/006_strategy_config.sql
         </code>{' '}
         run once.
+      </div>
+    )
+  }
+
+  if (orphan) {
+    return (
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3
+                      text-xs text-amber-300">
+        {account?.name ?? 'This account'} has no strategy row — run{' '}
+        <code className="rounded bg-black/30 px-1">
+          supabase/migrations/010_strategy_per_account.sql
+        </code>{' '}
+        to give every account one.
       </div>
     )
   }
