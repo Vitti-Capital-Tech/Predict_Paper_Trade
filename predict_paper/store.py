@@ -41,7 +41,8 @@ class NullStore:
     def finish_run(self, *a: Any, **k: Any) -> None: return None
     def pending_manual_orders(self, *a: Any, **k: Any) -> list: return []
     def adoptable_positions(self, *a: Any, **k: Any) -> list: return []
-    def strategy_config(self, *a: Any, **k: Any): return None
+    def strategy_configs(self, *a: Any, **k: Any) -> list: return []
+    def accounts(self, *a: Any, **k: Any) -> list: return []
     def adjust_account_balance(self, *a: Any, **k: Any) -> None: return None
     def resolve_manual_order(self, *a: Any, **k: Any) -> None: return None
 
@@ -210,24 +211,36 @@ class SupabaseStore:
                     {"id": "eq.%d" % self.run_id})
 
     # ---- remote settings ------------------------------------------------
-    def strategy_config(self) -> Optional[Dict[str, Any]]:
-        """The single settings row the dashboard edits.
+    def strategy_configs(self) -> Optional[List[Dict[str, Any]]]:
+        """Every account's settings row.
 
         Returns None on any failure, which the caller treats as "keep what you
-        have" - a Supabase blip must not silently reset the strategy to
-        defaults mid-session.
+        have" - a Supabase blip must not silently reset a live strategy to
+        defaults. An empty list is a real answer and means no account is
+        configured, which is different from not knowing.
         """
         try:
             r = self.session.get("%s/strategy_config" % self.base,
-                                 timeout=self.timeout,
-                                 params={"id": "eq.1", "limit": "1"})
+                                 timeout=self.timeout, params={"limit": "200"})
             if r.status_code >= 400:
                 self._note_failure("strategy_config -> %s" % r.status_code)
                 return None
-            rows = r.json() or []
-            return rows[0] if rows else None
+            return r.json() or []
         except Exception as exc:  # noqa: BLE001
             self._note_failure("strategy_config -> %s" % exc)
+            return None
+
+    def accounts(self) -> Optional[List[Dict[str, Any]]]:
+        """Paper accounts, for the balance each strategy is spending."""
+        try:
+            r = self.session.get("%s/accounts" % self.base, timeout=self.timeout,
+                                 params={"select": "id,name,balance", "limit": "200"})
+            if r.status_code >= 400:
+                self._note_failure("accounts -> %s" % r.status_code)
+                return None
+            return r.json() or []
+        except Exception as exc:  # noqa: BLE001
+            self._note_failure("accounts -> %s" % exc)
             return None
 
     # ---- recovery -------------------------------------------------------

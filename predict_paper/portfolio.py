@@ -119,11 +119,20 @@ class Portfolio:
     def open_positions(self) -> List[Position]:
         return [p for p in self.positions.values() if p.status == "open"]
 
-    def open_rounds(self) -> set:
-        return {p.round_id for p in self.open_positions}
+    def open_rounds(self, account_id: Optional[int] = None) -> set:
+        """Rounds with something open, optionally for one account only.
 
-    def has_round(self, round_id: str) -> bool:
-        return any(p.round_id == round_id for p in self.positions.values())
+        Scoped by account because the concurrency cap is per strategy: two
+        accounts each allowed two open rounds should get two each, not two
+        between them.
+        """
+        return {p.round_id for p in self.open_positions
+                if account_id is None or p.account_id == account_id}
+
+    def has_round(self, round_id: str, account_id: Optional[int] = None) -> bool:
+        return any(p.round_id == round_id
+                   and (account_id is None or p.account_id == account_id)
+                   for p in self.positions.values())
 
     def position_for(self, symbol: str) -> Optional[Position]:
         for p in self.open_positions:
@@ -221,6 +230,11 @@ class Portfolio:
             run_id=getattr(self.store, "run_id", None),
         )
         self.cash -= pos.cost + fee
+        if account_id:
+            try:
+                self.store.adjust_account_balance(account_id, -(pos.cost + fee))
+            except Exception as exc:  # noqa: BLE001
+                log.debug("account debit failed: %s", exc)
         self.positions[pos.position_id] = pos
         self._sync(pos)
         self.log_event("entry", position_id=pos.position_id, symbol=symbol,

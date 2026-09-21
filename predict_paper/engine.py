@@ -6,6 +6,7 @@ and never places an order.
 """
 from __future__ import annotations
 
+import copy
 import logging
 import time
 from datetime import datetime, timezone
@@ -41,6 +42,40 @@ def _top_of_book(book, side: str):
     if not prices:
         return None
     return min(prices) if side == "buy" else max(prices)
+
+
+class AccountStrategy:
+    """One account's rules, and the machinery that runs them.
+
+    Each account gets its own Config copy rather than a reference, so editing
+    one account's odds in the dashboard cannot move another's. The ATR gate is
+    per account too: two accounts may watch different resolutions or periods,
+    and a shared gate would hand one of them the other's reading.
+    """
+
+    def __init__(self, account_id: int, cfg, client):
+        self.account_id = account_id
+        self.cfg = cfg
+        self.name = str(account_id)
+        self.balance = 0.0
+        self.strategy = Strategy(cfg)
+        self.atr_gate = AtrGate(
+            client, cfg.atr.candle_symbol, cfg.atr.resolution, cfg.atr.period,
+            cfg.atr.min_atr, cfg.atr.refresh_sec, cfg.atr.enabled)
+        self._atr_key = (cfg.atr.resolution, cfg.atr.period, cfg.atr.min_atr,
+                         cfg.atr.enabled)
+        self.stamp = None
+
+    def rebuild_gate_if_needed(self, client) -> None:
+        """The gate caches candles against its resolution and period."""
+        key = (self.cfg.atr.resolution, self.cfg.atr.period, self.cfg.atr.min_atr,
+               self.cfg.atr.enabled)
+        if key != self._atr_key:
+            self._atr_key = key
+            self.atr_gate = AtrGate(
+                client, self.cfg.atr.candle_symbol, self.cfg.atr.resolution,
+                self.cfg.atr.period, self.cfg.atr.min_atr,
+                self.cfg.atr.refresh_sec, self.cfg.atr.enabled)
 
 
 class Engine:
@@ -83,7 +118,9 @@ class Engine:
         self._last_spot: Dict[str, float] = {}
         self._halt_logged: set = set()
         self._config_at: float = 0.0
-        self._config_stamp = None
+        # account_id -> AccountStrategy. Empty until the first refresh,
+        # and the bot opens nothing while it is empty.
+        self.accounts: Dict[int, AccountStrategy] = {}
 
     # ---- remote settings --------------------------------------------------
     def _num(self, row, key, default=None):
@@ -91,23 +128,64 @@ class Engine:
         return default if v is None else float(v)
 
     def refresh_remote_config(self, now_ts: float) -> None:
-        """Pull the dashboard's settings over the top of config.yaml.
+        """Rebuild each account's rules from the dashboard.
 
-        The file stays the boot default and the fallback; this is the live
-        override. A failed read leaves the running settings alone, because
-        resetting a strategy to defaults because of a network blip would be
-        worse than running a stale one.
+        config.yaml stays the boot default and the template every account
+        starts from; these rows are the live overrides. A failed read leaves
+        the running strategies alone, because resetting them because of a
+        network blip would be worse than running them stale.
         """
         every = self.cfg.config_refresh_sec
         if not every or (now_ts - self._config_at) < every:
             return
         self._config_at = now_ts
 
-        row = self.store.strategy_config()
-        if not row:
+        rows = self.store.strategy_configs()
+        if rows is None:
             return
+        balances = {a["id"]: a for a in (self.store.accounts() or [])}
 
-        c = self.cfg
+        seen = set()
+        for row in rows:
+            aid = row.get("account_id")
+            if aid is None:
+                continue
+            seen.add(aid)
+
+            acct = self.accounts.get(aid)
+            if acct is None:
+                # A copy, so one account's edits cannot reach another's rules.
+                acct = AccountStrategy(aid, copy.deepcopy(self.cfg), self.client)
+                self.accounts[aid] = acct
+
+            self._apply_row(acct.cfg, row)
+            acct.strategy = Strategy(acct.cfg)
+            acct.rebuild_gate_if_needed(self.client)
+
+            info = balances.get(aid) or {}
+            acct.name = info.get("name") or str(aid)
+            acct.balance = float(info.get("balance") or 0.0)
+
+            stamp = row.get("updated_at")
+            if stamp != acct.stamp:
+                acct.stamp = stamp
+                c = acct.cfg
+                log.info("settings %-16s %-8s | %s | ATR>%.0f %s p%d | wing 1:%.0f "
+                         "| exit %s/%s | $%.0f/leg | bal %.2f",
+                         acct.name, "ARMED" if c.enabled else "DISARMED",
+                         ("session %s" % c.timing.sessions[0]) if c.timing.sessions
+                         else "all hours",
+                         c.atr.min_atr, c.atr.resolution, c.atr.period,
+                         c.entry.wing_odds, c.exit.mode, c.exit.moneyness_trigger,
+                         c.entry.investment_per_leg, acct.balance)
+
+        # An account deleted in the dashboard stops trading here too.
+        for gone in set(self.accounts) - seen:
+            log.info("account %s removed - no longer trading it", gone)
+            self.accounts.pop(gone, None)
+
+    def _apply_row(self, c, row: Dict) -> None:
+        """Lay one settings row over a Config."""
         c.enabled = bool(row.get("enabled", c.enabled))
         c.api.underlying = row.get("underlying") or c.api.underlying
 
@@ -116,18 +194,15 @@ class Engine:
         c.atr.period = int(row.get("atr_period") or c.atr.period)
         c.atr.min_atr = self._num(row, "atr_min", c.atr.min_atr)
 
-        # "09:30" + "21:00" -> the one session the panel exposes.
         start, end = row.get("session_start"), row.get("session_end")
         c.timing.sessions = ["%s-%s" % (str(start)[:5], str(end)[:5])]             if start and end else []
         c.timing.session_timezone = row.get("session_timezone") or c.timing.session_timezone
         days = row.get("weekdays")
         if days:
             c.timing.weekdays = [int(d) for d in days]
-        for key, attr in (("min_seconds_since_launch", "min_seconds_since_launch"),
-                          ("max_seconds_since_launch", "max_seconds_since_launch"),
-                          ("min_seconds_to_expiry", "min_seconds_to_expiry"),
-                          ("max_seconds_to_expiry", "max_seconds_to_expiry")):
-            setattr(c.timing, attr, self._num(row, key, getattr(c.timing, attr)))
+        for key in ("min_seconds_since_launch", "max_seconds_since_launch",
+                    "min_seconds_to_expiry", "max_seconds_to_expiry"):
+            setattr(c.timing, key, self._num(row, key, getattr(c.timing, key)))
 
         c.entry.odds_convention = row.get("odds_convention") or c.entry.odds_convention
         c.entry.wing_odds = self._num(row, "wing_odds", c.entry.wing_odds)
@@ -154,20 +229,6 @@ class Engine:
             row.get("max_concurrent_rounds") or c.portfolio.max_concurrent_rounds)
         c.portfolio.max_cost_per_round = self._num(
             row, "max_cost_per_round", c.portfolio.max_cost_per_round)
-
-        stamp = row.get("updated_at")
-        if stamp != self._config_stamp:
-            self._config_stamp = stamp
-            log.info("settings %s | %s | ATR>%.0f on %s p%d | wing 1:%.0f | exit %s/%s",
-                     "ARMED" if c.enabled else "DISARMED",
-                     ("session %s" % c.timing.sessions[0]) if c.timing.sessions
-                     else "all hours",
-                     c.atr.min_atr, c.atr.resolution, c.atr.period,
-                     c.entry.wing_odds, c.exit.mode, c.exit.moneyness_trigger)
-            # The gate caches candles against its old resolution and period.
-            self.atr_gate = AtrGate(
-                self.client, c.atr.candle_symbol, c.atr.resolution, c.atr.period,
-                c.atr.min_atr, c.atr.refresh_sec, c.atr.enabled)
 
     # ---- data -----------------------------------------------------------
     def _refresh_products(self, now_ts: float) -> List[Dict]:
@@ -203,6 +264,15 @@ class Engine:
             self.portfolio.settle_position(
                 pos, price, now, self._last_spot.get(pos.symbol))
 
+    # ---- whose rules apply --------------------------------------------
+    def _cfg_for(self, pos):
+        acct = self.accounts.get(getattr(pos, "account_id", None))
+        return acct.cfg if acct else self.cfg
+
+    def _strategy_for(self, pos):
+        acct = self.accounts.get(getattr(pos, "account_id", None))
+        return acct.strategy if acct else self.strategy
+
     # ---- exits ----------------------------------------------------------
     def manage_exits(self, by_symbol: Dict[str, Contract], now: datetime) -> None:
         for pos in list(self.portfolio.open_positions):
@@ -221,19 +291,25 @@ class Engine:
                                  pos.symbol, tte)
                     continue
 
+            # A position is judged by the rules of the account that opened it,
+            # not by whichever account was edited last. One without an account
+            # - a legacy bot entry, or a manual trade placed before accounts
+            # existed - falls back to config.yaml.
+            cfg = self._cfg_for(pos)
+
             spot = contract.spot_price
-            should, reason = self.strategy.should_exit(pos, contract, spot)
+            should, reason = self._strategy_for(pos).should_exit(pos, contract, spot)
 
             # A flatten scheduled inside the halt window can never execute; the
             # branch above has already skipped those, so this only fires while
             # trading is still open. Manual positions are exempt for the same
             # reason they are exempt from take-profit: the user owns the exit.
-            manual = pos.role == "manual" and not self.cfg.exit.apply_to_manual
-            if not should and not manual                     and self.cfg.exit.flatten_before_expiry_sec is not None:
+            manual = pos.role == "manual" and not cfg.exit.apply_to_manual
+            if not should and not manual                     and cfg.exit.flatten_before_expiry_sec is not None:
                 rnd_expiry = self._expiry_by_symbol.get(pos.symbol)
                 if rnd_expiry is not None:
                     tte = (rnd_expiry - now).total_seconds()
-                    if tte <= self.cfg.exit.flatten_before_expiry_sec:
+                    if tte <= cfg.exit.flatten_before_expiry_sec:
                         should, reason = True, "flatten %.0fs before expiry" % tte
 
             if not should:
@@ -251,14 +327,16 @@ class Engine:
             self.portfolio.close_position(pos, fill, now, reason)
 
     # ---- entries --------------------------------------------------------
-    def try_enter(self, rnd: Round, now: datetime, atr_ok: bool,
-                  atr: Optional[float]) -> None:
-        if self.cfg.entry.one_entry_per_round and self.portfolio.has_round(rnd.round_id):
+    def try_enter(self, acct: "AccountStrategy", rnd: Round, now: datetime,
+                  atr_ok: bool, atr: Optional[float]) -> None:
+        cfg = acct.cfg
+        aid = acct.account_id
+        if cfg.entry.one_entry_per_round and self.portfolio.has_round(rnd.round_id, aid):
             return
-        if len(self.portfolio.open_rounds()) >= self.cfg.portfolio.max_concurrent_rounds:
+        if len(self.portfolio.open_rounds(aid)) >= cfg.portfolio.max_concurrent_rounds:
             return
 
-        decision = self.strategy.evaluate(rnd, now, atr_ok, atr)
+        decision = acct.strategy.evaluate(rnd, now, atr_ok, atr)
         if not decision.enter:
             key = (rnd.round_id, "|".join(decision.reasons))
             if key not in self._logged_rejects:
@@ -281,7 +359,7 @@ class Engine:
             price = leg.quoted_price
             if not price or price <= 0:
                 return 0
-            return int(round(self.cfg.entry.investment_per_leg / price))
+            return int(round(cfg.entry.investment_per_leg / price))
 
         # Price every leg first; with require_both_wings, a round is all-or-nothing,
         # so a leg that cannot fill must not leave the other one on naked.
@@ -292,14 +370,14 @@ class Engine:
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, why)
                 self.portfolio.log_event("skip", round_id=rnd.round_id,
                                          reasons=["%s %s" % (leg.role, why)])
-                if self.cfg.entry.require_both_wings:
+                if cfg.entry.require_both_wings:
                     return
                 continue
             qty = size_for(leg)
             if qty < 1:
                 log.info("SKIP   %-18s %s: size rounds to zero at %.4f",
                          rnd.round_id, leg.role, leg.quoted_price or 0.0)
-                if self.cfg.entry.require_both_wings:
+                if cfg.entry.require_both_wings:
                     return
                 continue
 
@@ -310,17 +388,17 @@ class Engine:
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, fill.reason)
                 self.portfolio.log_event("skip", round_id=rnd.round_id,
                                          reasons=["%s %s" % (leg.role, fill.reason)])
-                if self.cfg.entry.require_both_wings:
+                if cfg.entry.require_both_wings:
                     return
                 continue
-            cap = self.cfg.entry.max_slippage
+            cap = cfg.entry.max_slippage
             if cap is not None and leg.quoted_price is not None                     and (fill.avg_price - leg.quoted_price) > cap:
                 msg = "slippage %.4f exceeds cap %.4f" % (
                     fill.avg_price - leg.quoted_price, cap)
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, msg)
                 self.portfolio.log_event("skip", round_id=rnd.round_id,
                                          reasons=["%s %s" % (leg.role, msg)])
-                if self.cfg.entry.require_both_wings:
+                if cfg.entry.require_both_wings:
                     return
                 continue
 
@@ -332,7 +410,7 @@ class Engine:
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, msg)
                 self.portfolio.log_event("skip", round_id=rnd.round_id,
                                          reasons=["%s %s" % (leg.role, msg)])
-                if self.cfg.entry.require_both_wings:
+                if cfg.entry.require_both_wings:
                     return
                 continue
             planned.append((leg, fill))
@@ -340,22 +418,27 @@ class Engine:
         if not planned:
             return
 
-        cap = self.cfg.portfolio.max_cost_per_round
+        cap = cfg.portfolio.max_cost_per_round
         total = sum(f.qty * f.avg_price for _, f in planned)
         if cap is not None and total > cap:
             log.info("SKIP   %-18s cost %.2f exceeds cap %.2f", rnd.round_id, total, cap)
             self.portfolio.log_event("skip", round_id=rnd.round_id,
                                      reasons=["cost %.2f > cap %.2f" % (total, cap)])
             return
-        if total > self.portfolio.cash:
-            log.info("SKIP   %-18s cost %.2f exceeds cash %.2f",
-                     rnd.round_id, total, self.portfolio.cash)
+        if total > acct.balance:
+            log.info("SKIP   %-18s %s: cost %.2f exceeds balance %.2f",
+                     rnd.round_id, acct.name, total, acct.balance)
             return
 
         for leg, fill in planned:
+            # Tagged with the account, so the trade debits and credits that
+            # balance and shows up in its portfolio. Bot entries used to carry
+            # no account at all, which left them invisible in a panel that
+            # filters by one.
             self.portfolio.open_position(
                 rnd.round_id, leg.contract.symbol, leg.role, leg.contract.side,
-                leg.contract.strike, fill, now, decision.spot, atr)
+                leg.contract.strike, fill, now, decision.spot, atr,
+                account_id=aid)
 
     # ---- manual orders from the trade panel -----------------------------
     def process_manual_orders(self, by_symbol: Dict[str, Contract],
@@ -463,8 +546,8 @@ class Engine:
                 order.get("round_id") or "manual", symbol, "manual",
                 contract.side, contract.strike, fill, now,
                 contract.spot_price, atr, account_id=account_id)
-            if account_id:
-                self.store.adjust_account_balance(account_id, -cost)
+            # open_position debits the account now; doing it again here would
+            # charge twice for one fill.
             self.store.resolve_manual_order(
                 oid, "filled", position_id=pos.position_id,
                 fill_price=fill.avg_price, contracts=fill.qty)
@@ -588,11 +671,16 @@ class Engine:
                          rnd.expiry.strftime("%H:%M:%SZ"), rnd.spot)
             if rnd.seconds_to_expiry(now) <= 0:
                 continue
-            # Disarmed stops new entries only. Settlement, exits and manual
-            # orders above have already run.
-            if not self.cfg.enabled:
-                continue
-            self.try_enter(rnd, now, atr_ok, atr)
+
+            # Each armed account trades this round under its own rules, with
+            # its own ATR reading - two accounts may watch different
+            # resolutions. Disarmed stops new entries only; settlement, exits
+            # and manual orders above have already run for every account.
+            for acct in list(self.accounts.values()):
+                if not acct.cfg.enabled:
+                    continue
+                ok, value = acct.atr_gate.passes(now_ts)
+                self.try_enter(acct, rnd, now, ok, value)
 
         self._publish_snapshot(rounds, now, atr_ok, atr)
 

@@ -221,21 +221,22 @@ export async function fetchEvents(runId, limit = 60) {
 // One row (id = 1) the worker polls every few seconds, so a threshold changed
 // here takes effect without an SSH session or a restart.
 
-export async function fetchStrategyConfig() {
+export async function fetchStrategyConfig(accountId) {
+  if (!accountId) return null
   const { data, error } = await supabase
     .from('strategy_config')
     .select('*')
-    .eq('id', 1)
+    .eq('account_id', accountId)
     .limit(1)
   if (error) throw error
   return data?.[0] ?? null
 }
 
-export async function updateStrategyConfig(patch) {
+export async function updateStrategyConfig(accountId, patch) {
   const { data, error } = await supabase
     .from('strategy_config')
     .update(patch)
-    .eq('id', 1)
+    .eq('account_id', accountId)
     .select()
   if (error) throw error
   return data?.[0] ?? null

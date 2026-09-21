@@ -130,7 +130,7 @@ function Toggle({ on, onChange, label }) {
   )
 }
 
-export default function StrategyPanel({ workerLive, onSlippageChange }) {
+export default function StrategyPanel({ account, workerLive, onSlippageChange }) {
   const [saved, setSaved] = useState(null)   // what the database holds
   const [draft, setDraft] = useState(null)   // what the form shows
   const [busy, setBusy] = useState(false)
@@ -138,8 +138,15 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
   const [missing, setMissing] = useState(false)
   const [open, setOpen] = useState(false)
 
+  const accountId = account?.id ?? null
+
+  // Switching account swaps the whole strategy, so the form has to let go of
+  // the previous account's draft rather than showing it under a new name.
+  useEffect(() => { setDraft(null); setSaved(null) }, [accountId])
+
   const load = useCallback(() => {
-    fetchStrategyConfig()
+    if (!accountId) return
+    fetchStrategyConfig(accountId)
       .then((row) => {
         if (!row) return
         setSaved(row)
@@ -153,7 +160,7 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
           setMissing(true)
         } else setError(msg)
       })
-  }, [onSlippageChange])
+  }, [accountId, onSlippageChange])
 
   useEffect(() => {
     load()
@@ -173,7 +180,7 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
     setBusy(true)
     setError(null)
     try {
-      const row = await updateStrategyConfig(patch)
+      const row = await updateStrategyConfig(accountId, patch)
       setSaved(row)
       setDraft(row)
       onSlippageChange?.(Number(row.max_slippage))
@@ -182,7 +189,7 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
     } finally {
       setBusy(false)
     }
-  }, [onSlippageChange])
+  }, [accountId, onSlippageChange])
 
   if (missing) {
     return (
@@ -227,7 +234,14 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
             )}
           </span>
           <div>
-            <h3 className="text-sm font-semibold text-slate-100">Automated strategy</h3>
+            <h3 className="text-sm font-semibold text-slate-100">
+              Automated strategy
+              {account?.name && (
+                <span className="ml-1.5 font-normal text-slate-500">
+                  · {account.name}
+                </span>
+              )}
+            </h3>
             {/* Only the case the toggle cannot show for itself: on, but with
                 nothing running to act on it. */}
             {armed && !workerLive && (
