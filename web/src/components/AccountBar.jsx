@@ -11,9 +11,9 @@ import { PencilIcon, ResetIcon, TrashIcon } from './icons'
  * only touches a balance when a trade settles, so an edited figure is not
  * overwritten a couple of seconds later.
  *
- * Each row carries its own edit, reset and delete, because doing those through
- * a single "current account" menu meant switching to an account before you
- * could act on it.
+ * The selected account is pinned to the top of the list and is the only row
+ * carrying edit, reset and delete. Three icons on every row turned a switcher
+ * into a wall of buttons, and made the wrong row's bin easy to hit.
  */
 
 const money = (v) =>
@@ -23,14 +23,16 @@ const DEFAULT_BALANCE = 10000
 
 function IconButton({ title, onClick, tone = 'slate', children }) {
   const tones = {
-    slate: 'text-slate-500 hover:bg-white/10 hover:text-slate-200',
-    rose: 'text-slate-500 hover:bg-rose-500/15 hover:text-rose-300',
+    slate: 'border-white/10 text-slate-400 hover:border-white/30 hover:bg-white/10'
+         + ' hover:text-slate-100',
+    rose: 'border-white/10 text-slate-400 hover:border-rose-500/50'
+        + ' hover:bg-rose-500/15 hover:text-rose-300',
   }
   return (
     <button
       type="button" title={title} aria-label={title}
       onClick={(e) => { e.stopPropagation(); onClick() }}
-      className={`rounded p-1 transition-colors ${tones[tone]}`}
+      className={`rounded-md border p-1.5 transition-colors ${tones[tone]}`}
     >
       {children}
     </button>
@@ -152,6 +154,12 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   const fieldCls = `nums w-full rounded-md border border-white/10 bg-ink-800 px-2 py-1
                     text-xs text-slate-100 outline-none focus:border-sky-500/50`
 
+  // Current account first. It is the one carrying the actions, so it should not
+  // be somewhere down a scrolling list.
+  const ordered = account
+    ? [account, ...accounts.filter((a) => a.id !== account.id)]
+    : accounts
+
   return (
     <div className="relative flex items-center gap-2" ref={wrapRef}>
       <button
@@ -173,7 +181,7 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
         <div className="absolute right-0 top-full z-30 mt-2 w-80 overflow-hidden rounded-xl
                         border border-white/10 bg-ink-900 shadow-xl">
           <ul className="max-h-72 overflow-y-auto py-1">
-            {accounts.map((a) => {
+            {ordered.map((a) => {
               const isCurrent = a.id === account?.id
 
               if (editing === a.id) {
@@ -257,19 +265,25 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                   >
                     <span className="min-w-0 flex-1 truncate">{a.name}</span>
                     <span className="nums shrink-0 text-slate-500">{money(a.balance)}</span>
-                    <span className="flex shrink-0 items-center gap-0.5">
-                      <IconButton title="Edit name and balance" onClick={() => startEdit(a)}>
-                        <PencilIcon />
-                      </IconButton>
-                      <IconButton title={`Reset to ${money(a.starting_balance)}`}
-                                  onClick={() => reset(a)}>
-                        <ResetIcon />
-                      </IconButton>
-                      <IconButton title="Delete account" tone="rose"
-                                  onClick={() => { setEditing(null); setConfirming(a.id) }}>
-                        <TrashIcon />
-                      </IconButton>
-                    </span>
+                    {/* Only the selected account gets them: three icons on every
+                        row turned a switcher into a wall of buttons, and the
+                        odds of hitting the wrong row's bin went up with it. */}
+                    {isCurrent && (
+                      <span className="flex shrink-0 items-center gap-1">
+                        <IconButton title="Edit name and balance"
+                                    onClick={() => startEdit(a)}>
+                          <PencilIcon />
+                        </IconButton>
+                        <IconButton title={`Reset to ${money(a.starting_balance)}`}
+                                    onClick={() => reset(a)}>
+                          <ResetIcon />
+                        </IconButton>
+                        <IconButton title="Delete account" tone="rose"
+                                    onClick={() => { setEditing(null); setConfirming(a.id) }}>
+                          <TrashIcon />
+                        </IconButton>
+                      </span>
+                    )}
                   </div>
                 </li>
               )
