@@ -136,8 +136,6 @@ class Engine:
         c.entry.require_both_wings = bool(
             row.get("require_both_wings", c.entry.require_both_wings))
         c.entry.trade_middle = bool(row.get("trade_middle", c.entry.trade_middle))
-        c.entry.size_contracts = int(row.get("size_contracts") or c.entry.size_contracts)
-        c.entry.size_mode = row.get("size_mode") or c.entry.size_mode
         c.entry.investment_per_leg = self._num(
             row, "investment_per_leg", c.entry.investment_per_leg)
         c.entry.max_slippage = self._num(row, "max_slippage", c.entry.max_slippage)
@@ -274,14 +272,12 @@ class Engine:
         legs = [l for l in decision.legs if l.ok]
 
         def size_for(leg) -> int:
-            """Contracts to buy on this leg.
+            """Contracts to buy on this leg, from a dollar budget.
 
-            A dollar budget has to be converted at the leg's own price: the two
-            wings are rarely priced alike, so one fixed count would put very
-            different money on each.
+            Converted at the leg's own price rather than once for the round:
+            the two wings are rarely priced alike, so a single count would put
+            very different money on each. Same arithmetic the ticket uses.
             """
-            if self.cfg.entry.size_mode != "investment":
-                return int(self.cfg.entry.size_contracts)
             price = leg.quoted_price
             if not price or price <= 0:
                 return 0

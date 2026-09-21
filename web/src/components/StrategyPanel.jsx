@@ -248,25 +248,6 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
 
       {open && (
         <>
-          <Section title="ATR gate">
-            <Field label="Chart" info="Which candles the ATR is measured on. 15m smooths out noise; 1m reacts faster but fires on moves too small to trade.">
-              <div className="mt-1">
-                <Dropdown
-                  ariaLabel="ATR resolution" value={draft.atr_resolution}
-                  onChange={(v) => set('atr_resolution', v)}
-                  options={ATR_RESOLUTIONS.map((r) => ({ value: r, label: r }))}
-                />
-              </div>
-            </Field>
-            <Field label="Candles" info="How many candles the ATR averages over. 14 is the standard period — more candles means a slower, steadier reading." hint="ATR period">
-              <Num value={draft.atr_period} min={2} onChange={(v) => set('atr_period', v)} />
-            </Field>
-            <Field label="Minimum ATR" info="Skip the round unless average true range is above this. It is the &quot;only trade when BTC is actually moving&quot; rule. Set it to 0 to trade regardless." hint="0 = no gate">
-              <Num value={draft.atr_min} step={10} min={0}
-                   onChange={(v) => set('atr_min', v)} />
-            </Field>
-          </Section>
-
           <Section title="Timing">
             <Field label="Start time" info="The bot only opens positions after this time of day, in the timezone below. Leave both blank to trade around the clock.">
               <input type="time" className={inputCls} value={draft.session_start ?? ''}
@@ -311,6 +292,25 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
             <Field label="Min to expiry" info="Do not open anything with less than this left. Near expiry there is no time for the trade to work and the book thins badly. Delta halts trading in the final 60 seconds regardless." hint="no entries inside this">
               <Num value={draft.min_seconds_to_expiry}
                    onChange={(v) => set('min_seconds_to_expiry', v)} />
+            </Field>
+          </Section>
+
+          <Section title="ATR gate">
+            <Field label="Chart" info="Which candles the ATR is measured on. 15m smooths out noise; 1m reacts faster but fires on moves too small to trade.">
+              <div className="mt-1">
+                <Dropdown
+                  ariaLabel="ATR resolution" value={draft.atr_resolution}
+                  onChange={(v) => set('atr_resolution', v)}
+                  options={ATR_RESOLUTIONS.map((r) => ({ value: r, label: r }))}
+                />
+              </div>
+            </Field>
+            <Field label="Candles" info="How many candles the ATR averages over. 14 is the standard period — more candles means a slower, steadier reading." hint="ATR period">
+              <Num value={draft.atr_period} min={2} onChange={(v) => set('atr_period', v)} />
+            </Field>
+            <Field label="Minimum ATR" info="Skip the round unless average true range is above this. It is the &quot;only trade when BTC is actually moving&quot; rule. Set it to 0 to trade regardless." hint="0 = no gate">
+              <Num value={draft.atr_min} step={10} min={0}
+                   onChange={(v) => set('atr_min', v)} />
             </Field>
           </Section>
 
@@ -410,37 +410,14 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
               </div>
             </div>
             <Field
-              label="Size by"
-              info="Whether a leg is sized as a number of contracts or a dollar amount."
+              label="Investment per leg"
+              hint="dollars"
+              info="How much to put on each leg. Contracts follow from the price, the same way the ticket works — $25 at $0.05 is 500 contracts. There is no contract-count option because Predict does not offer one."
             >
-              <div className="mt-1">
-                <Dropdown
-                  ariaLabel="Sizing mode" value={draft.size_mode ?? 'contracts'}
-                  onChange={(v) => set('size_mode', v)}
-                  options={[{ value: 'contracts', label: 'Contracts' },
-                            { value: 'investment', label: 'Dollars' }]}
-                />
-              </div>
+              <Num value={draft.investment_per_leg ?? 25} step={5} min={1}
+                   onChange={(v) => set('investment_per_leg', v)} />
             </Field>
 
-            {(draft.size_mode ?? 'contracts') === 'investment' ? (
-              <Field
-                label="Investment per leg"
-                hint="dollars"
-                info="A fixed dollar amount each time; contracts are worked out from the price, as the manual ticket does. Keeps risk constant, but buys the most contracts on the cheapest wings — which is exactly where the book is thinnest."
-              >
-                <Num value={draft.investment_per_leg} step={5} min={1}
-                     onChange={(v) => set('investment_per_leg', v)} />
-              </Field>
-            ) : (
-              <Field
-                label="Contracts per leg"
-                info="A fixed number of contracts each time, each paying $1 if correct. Keeps slippage predictable because you consume the same depth every round, but your dollar risk swings with price."
-              >
-                <Num value={draft.size_contracts} min={1}
-                     onChange={(v) => set('size_contracts', v)} />
-              </Field>
-            )}
             <Field label="Max open rounds" info="How many rounds may hold open positions at once. Rounds start every 15 minutes and overlap, so without a cap exposure stacks up across several at a time.">
               <Num value={draft.max_concurrent_rounds} min={1}
                    onChange={(v) => set('max_concurrent_rounds', v)} />

@@ -84,13 +84,14 @@ class EntryConfig:
     trade_middle: bool = False
     middle_side: str = "auto"  # auto | call | put
 
-    # contracts -> a fixed count, so the depth consumed is the same every time
-    # investment -> a fixed dollar amount, so risk per leg is constant but the
-    #               count rises as the price falls, which is where the book is
-    #               thinnest. See README.
-    size_mode: str = "contracts"
+    # Dollars per leg, the way Predict itself sizes: you name the money and the
+    # contracts follow from the price. A fixed contract count is not something
+    # the venue offers, so it is not something this exposes.
+    #
+    # The risk a dollar budget carries is that the cheapest wings - the
+    # thinnest part of the book - are exactly where it buys the most contracts.
+    # `max_slippage` is what holds that in check.
     investment_per_leg: float = 25.0
-    size_contracts: int = 100
     one_entry_per_round: bool = True
 
 

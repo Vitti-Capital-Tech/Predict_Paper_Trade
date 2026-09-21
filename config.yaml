@@ -60,7 +60,7 @@ entry:
   trade_middle: false        # turn on to add the middle-strike leg
   middle_side: auto          # auto | call | put
 
-  size_contracts: 100        # see README - size is the dominant slippage driver
+  investment_per_leg: 25.0   # dollars per leg; contracts follow from the price
   one_entry_per_round: true
 
 # "exit rule ITM 50"

@@ -373,8 +373,9 @@ So the engine:
 apparent edge is a fill-model artifact. If the strategy only works under `mark`,
 it does not work.
 
-**Start with `size_contracts: 100` or lower** and check the reported slippage
-before scaling.
+**Start with a small `investment_per_leg`** and check the reported slippage
+before scaling. A dollar budget buys the most contracts exactly where the
+book is thinnest, so the slippage cap matters more here than the amount does.
 
 ---
 
