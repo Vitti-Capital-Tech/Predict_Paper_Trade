@@ -21,15 +21,12 @@ const inputCls = `field-dark nums mt-1 w-full rounded-lg border border-white/10 
                   px-2.5 py-1.5 text-sm text-slate-200 outline-none
                   focus:border-sky-500/50`
 
-function Section({ title, hint, children }) {
+function Section({ title, children }) {
   return (
     <section className="border-t border-white/5 px-4 py-4">
-      <div className="mb-3">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-          {title}
-        </h4>
-        {hint && <p className="mt-0.5 text-[11px] text-slate-600">{hint}</p>}
-      </div>
+      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {title}
+      </h4>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {children}
       </div>
@@ -172,13 +169,11 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
           </span>
           <div>
             <h3 className="text-sm font-semibold text-slate-100">Automated strategy</h3>
-            <p className="text-[11px] text-slate-500">
-              {trading
-                ? 'Running — the worker is trading these rules'
-                : armed
-                  ? 'On, but no worker is running to trade it'
-                  : 'Off — no new entries. Open positions still settle.'}
-            </p>
+            {/* Only the case the toggle cannot show for itself: on, but with
+                nothing running to act on it. */}
+            {armed && !workerLive && (
+              <p className="text-[11px] text-amber-400">No worker is running to trade it</p>
+            )}
           </div>
         </div>
 
@@ -217,14 +212,7 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
 
       {open && (
         <>
-          <Section title="ATR gate" hint="Only trade when the underlying is actually moving.">
-            <Field label="Enabled">
-              <Toggle
-                on={Boolean(draft.atr_enabled)}
-                onChange={(v) => set('atr_enabled', v)}
-                label={draft.atr_enabled ? 'On' : 'Off'}
-              />
-            </Field>
+          <Section title="ATR gate">
             <Field label="Chart">
               <div className="mt-1">
                 <Dropdown
@@ -237,13 +225,13 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
             <Field label="Candles" hint="ATR period">
               <Num value={draft.atr_period} min={2} onChange={(v) => set('atr_period', v)} />
             </Field>
-            <Field label="Minimum ATR" hint="skip the round below this">
+            <Field label="Minimum ATR" hint="0 = no gate">
               <Num value={draft.atr_min} step={10} min={0}
                    onChange={(v) => set('atr_min', v)} />
             </Field>
           </Section>
 
-          <Section title="Timing" hint="Wall clock, and where inside the round.">
+          <Section title="Timing">
             <Field label="Start time">
               <input type="time" className={inputCls} value={draft.session_start ?? ''}
                      onChange={(e) => set('session_start', e.target.value || null)} />
@@ -290,7 +278,7 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
             </Field>
           </Section>
 
-          <Section title="Entry" hint="Which legs, and how cheap they have to be.">
+          <Section title="Entry">
             <Field label="Odds (1:N)" hint={`max price $${maxPrice.toFixed(4)}`}>
               <Num value={draft.wing_odds} step={0.5} min={0.5}
                    onChange={(v) => set('wing_odds', v)} />
@@ -321,7 +309,7 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
             </Field>
           </Section>
 
-          <Section title="Exit" hint="Measured on spot against the strike.">
+          <Section title="Exit">
             <Field label="Trigger">
               <div className="mt-1">
                 <Dropdown
@@ -366,17 +354,25 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
           </Section>
 
           <Section title="Execution and size">
-            <Field
-              label="Slippage tolerance" wide
-              hint={`$${Number(draft.max_slippage).toFixed(2)} — a fill worse than this above the touch is refused`}
-            >
+            <div className="col-span-2">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[11px] text-slate-500">Slippage tolerance</span>
+                <span className="nums text-sm font-semibold text-sky-300">
+                  ${Number(draft.max_slippage).toFixed(2)}
+                </span>
+              </div>
               <input
                 type="range" min="0.01" max="0.10" step="0.01"
+                aria-label="Slippage tolerance"
                 value={draft.max_slippage}
                 onChange={(e) => set('max_slippage', Number(e.target.value))}
-                className="slider-theme mt-2 w-full"
+                className="slider-theme mt-1.5 w-full"
               />
-            </Field>
+              <div className="nums flex justify-between text-[10px] text-slate-600">
+                <span>$0.01</span>
+                <span>$0.10</span>
+              </div>
+            </div>
             <Field label="Contracts per leg">
               <Num value={draft.size_contracts} min={1}
                    onChange={(v) => set('size_contracts', v)} />
@@ -389,10 +385,8 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
 
           <div className="flex items-center justify-between gap-3 border-t border-white/5
                           px-4 py-3">
-            <p className="text-[11px] text-slate-600">
-              {dirty
-                ? 'Unsaved changes'
-                : 'Saved — the worker reloads within a few seconds.'}
+            <p className="text-[11px] text-amber-400">
+              {dirty ? 'Unsaved changes' : ''}
             </p>
             <div className="flex gap-2">
               <button
@@ -405,6 +399,9 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
               <button
                 onClick={() => {
                   const { id: _id, updated_at: _u, ...patch } = draft
+                  // The gate has no switch of its own any more: a minimum of
+                  // zero is what turns it off.
+                  patch.atr_enabled = Number(patch.atr_min) > 0
                   persist(patch)
                 }}
                 disabled={!dirty || busy}
