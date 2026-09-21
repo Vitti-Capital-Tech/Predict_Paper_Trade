@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { isConfigured, fetchAccounts, fetchLatestRun } from './lib/supabase'
 import TradePanel from './components/TradePanel'
 import PortfolioTabs from './components/PortfolioTabs'
+import StrategyPanel from './components/StrategyPanel'
 import AccountBar from './components/AccountBar'
 import Logo from './components/Logo'
 
@@ -122,6 +123,7 @@ export default function App() {
           onSlippageChange={setSlippage}
           onOrderResolved={() => setTradeTick((n) => n + 1)}
         />
+        <StrategyPanel workerLive={workerLive} onSlippageChange={setSlippage} />
         <PortfolioTabs accountId={accountId} slippage={slippage}
                        refreshKey={tradeTick} />
       </main>

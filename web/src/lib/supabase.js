@@ -182,3 +182,27 @@ export async function fetchEvents(runId, limit = 60) {
   if (error) throw error
   return data ?? []
 }
+
+// ------------------------------------------------- strategy settings ----
+// One row (id = 1) the worker polls every few seconds, so a threshold changed
+// here takes effect without an SSH session or a restart.
+
+export async function fetchStrategyConfig() {
+  const { data, error } = await supabase
+    .from('strategy_config')
+    .select('*')
+    .eq('id', 1)
+    .limit(1)
+  if (error) throw error
+  return data?.[0] ?? null
+}
+
+export async function updateStrategyConfig(patch) {
+  const { data, error } = await supabase
+    .from('strategy_config')
+    .update(patch)
+    .eq('id', 1)
+    .select()
+  if (error) throw error
+  return data?.[0] ?? null
+}

@@ -186,6 +186,24 @@ class Strategy:
                 return True, "stop loss: bid %.4f <= %.4f" % (bid, ex.stop_loss_price)
             return False, ""
 
+        if ex.mode == "moneyness":
+            if spot is None:
+                return False, ""
+            # Signed distance past the strike in this leg's favour: positive
+            # means the contract is in the money.
+            edge = (spot - position.strike) if position.side == "call"                 else (position.strike - spot)
+            trig = ex.moneyness_trigger
+            if trig == "itm" and edge >= ex.spot_points_itm:
+                return True, "ITM: %.1f points past strike %.0f" % (
+                    edge, position.strike)
+            if trig == "otm" and edge <= -ex.spot_points_itm:
+                return True, "OTM: %.1f points against strike %.0f" % (
+                    -edge, position.strike)
+            if trig == "atm" and abs(spot - position.strike) <= ex.atm_band_points:
+                return True, "ATM: spot %.1f within %.0f of strike %.0f" % (
+                    spot, ex.atm_band_points, position.strike)
+            return False, ""
+
         if ex.mode == "spot_points":
             if spot is None:
                 return False, ""

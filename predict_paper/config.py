@@ -75,6 +75,10 @@ class EntryConfig:
     wing_odds: float = 5.0
     middle_odds: float = 3.0
 
+    # A leg whose fill lands more than this above the touch is skipped. The
+    # odds re-test already catches gross slippage, but only when the ceiling
+    # happens to be nearby; this is the explicit cap.
+    max_slippage: Optional[float] = None
     trade_wings: bool = True
     require_both_wings: bool = True
     trade_middle: bool = False
@@ -93,6 +97,12 @@ class ExitConfig:
       spot_points -- "ITM 50" = close when spot is 50 points past the strike
     """
     mode: str = "price"
+    # moneyness mode: which side of the strike ends the trade.
+    #   itm -> spot is `spot_points_itm` past the strike in your favour
+    #   otm -> spot is `spot_points_itm` past it against you (a stop)
+    #   atm -> spot is within `atm_band_points` of the strike
+    moneyness_trigger: str = "itm"
+    atm_band_points: float = 25.0
     take_profit_price: float = 0.50
     spot_points_itm: float = 50.0
     stop_loss_price: Optional[float] = None
@@ -143,6 +153,13 @@ class Config:
     # On startup, take over positions a previous worker left open. Hosting
     # makes restarts routine - every redeploy is one - and without this each
     # restart strands whatever was open at the time.
+    # Master switch. False stops new entries; exits and settlement continue,
+    # because disarming must not strand an open position.
+    enabled: bool = True
+    # Poll Supabase for edited settings this often. None disables remote
+    # config entirely and config.yaml stays the only source.
+    config_refresh_sec: Optional[float] = 5.0
+
     recover_open_positions: bool = True
     # How long a run's heartbeat must have been silent before its positions
     # count as abandoned. Must comfortably exceed the poll interval, or a live

@@ -82,6 +82,91 @@ class Engine:
         # underlying price that produced its outcome.
         self._last_spot: Dict[str, float] = {}
         self._halt_logged: set = set()
+        self._config_at: float = 0.0
+        self._config_stamp = None
+
+    # ---- remote settings --------------------------------------------------
+    def _num(self, row, key, default=None):
+        v = row.get(key)
+        return default if v is None else float(v)
+
+    def refresh_remote_config(self, now_ts: float) -> None:
+        """Pull the dashboard's settings over the top of config.yaml.
+
+        The file stays the boot default and the fallback; this is the live
+        override. A failed read leaves the running settings alone, because
+        resetting a strategy to defaults because of a network blip would be
+        worse than running a stale one.
+        """
+        every = self.cfg.config_refresh_sec
+        if not every or (now_ts - self._config_at) < every:
+            return
+        self._config_at = now_ts
+
+        row = self.store.strategy_config()
+        if not row:
+            return
+
+        c = self.cfg
+        c.enabled = bool(row.get("enabled", c.enabled))
+        c.api.underlying = row.get("underlying") or c.api.underlying
+
+        c.atr.enabled = bool(row.get("atr_enabled", c.atr.enabled))
+        c.atr.resolution = row.get("atr_resolution") or c.atr.resolution
+        c.atr.period = int(row.get("atr_period") or c.atr.period)
+        c.atr.min_atr = self._num(row, "atr_min", c.atr.min_atr)
+
+        # "09:30" + "21:00" -> the one session the panel exposes.
+        start, end = row.get("session_start"), row.get("session_end")
+        c.timing.sessions = ["%s-%s" % (str(start)[:5], str(end)[:5])]             if start and end else []
+        c.timing.session_timezone = row.get("session_timezone") or c.timing.session_timezone
+        days = row.get("weekdays")
+        if days:
+            c.timing.weekdays = [int(d) for d in days]
+        for key, attr in (("min_seconds_since_launch", "min_seconds_since_launch"),
+                          ("max_seconds_since_launch", "max_seconds_since_launch"),
+                          ("min_seconds_to_expiry", "min_seconds_to_expiry"),
+                          ("max_seconds_to_expiry", "max_seconds_to_expiry")):
+            setattr(c.timing, attr, self._num(row, key, getattr(c.timing, attr)))
+
+        c.entry.odds_convention = row.get("odds_convention") or c.entry.odds_convention
+        c.entry.wing_odds = self._num(row, "wing_odds", c.entry.wing_odds)
+        c.entry.middle_odds = self._num(row, "middle_odds", c.entry.middle_odds)
+        c.entry.trade_wings = bool(row.get("trade_wings", c.entry.trade_wings))
+        c.entry.require_both_wings = bool(
+            row.get("require_both_wings", c.entry.require_both_wings))
+        c.entry.trade_middle = bool(row.get("trade_middle", c.entry.trade_middle))
+        c.entry.size_contracts = int(row.get("size_contracts") or c.entry.size_contracts)
+        c.entry.max_slippage = self._num(row, "max_slippage", c.entry.max_slippage)
+
+        c.exit.mode = row.get("exit_mode") or c.exit.mode
+        c.exit.moneyness_trigger = row.get("exit_trigger") or c.exit.moneyness_trigger
+        c.exit.spot_points_itm = self._num(row, "exit_points", c.exit.spot_points_itm)
+        c.exit.atm_band_points = self._num(row, "exit_atm_band", c.exit.atm_band_points)
+        c.exit.take_profit_price = self._num(row, "take_profit_price",
+                                             c.exit.take_profit_price)
+        c.exit.stop_loss_price = self._num(row, "stop_loss_price", c.exit.stop_loss_price)
+        c.exit.flatten_before_expiry_sec = self._num(
+            row, "flatten_before_expiry_sec", c.exit.flatten_before_expiry_sec)
+
+        c.portfolio.max_concurrent_rounds = int(
+            row.get("max_concurrent_rounds") or c.portfolio.max_concurrent_rounds)
+        c.portfolio.max_cost_per_round = self._num(
+            row, "max_cost_per_round", c.portfolio.max_cost_per_round)
+
+        stamp = row.get("updated_at")
+        if stamp != self._config_stamp:
+            self._config_stamp = stamp
+            log.info("settings %s | %s | ATR>%.0f on %s p%d | wing 1:%.0f | exit %s/%s",
+                     "ARMED" if c.enabled else "DISARMED",
+                     ("session %s" % c.timing.sessions[0]) if c.timing.sessions
+                     else "all hours",
+                     c.atr.min_atr, c.atr.resolution, c.atr.period,
+                     c.entry.wing_odds, c.exit.mode, c.exit.moneyness_trigger)
+            # The gate caches candles against its old resolution and period.
+            self.atr_gate = AtrGate(
+                self.client, c.atr.candle_symbol, c.atr.resolution, c.atr.period,
+                c.atr.min_atr, c.atr.refresh_sec, c.atr.enabled)
 
     # ---- data -----------------------------------------------------------
     def _refresh_products(self, now_ts: float) -> List[Dict]:
@@ -208,6 +293,17 @@ class Engine:
                 if self.cfg.entry.require_both_wings:
                     return
                 continue
+            cap = self.cfg.entry.max_slippage
+            if cap is not None and leg.quoted_price is not None                     and (fill.avg_price - leg.quoted_price) > cap:
+                msg = "slippage %.4f exceeds cap %.4f" % (
+                    fill.avg_price - leg.quoted_price, cap)
+                log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, msg)
+                self.portfolio.log_event("skip", round_id=rnd.round_id,
+                                         reasons=["%s %s" % (leg.role, msg)])
+                if self.cfg.entry.require_both_wings:
+                    return
+                continue
+
             # Slippage can push the real fill past the odds threshold even when
             # the touch price passed. Re-test against what we would actually pay.
             if fill.avg_price > leg.max_price:
@@ -439,6 +535,9 @@ class Engine:
         now_ts = time.time()
         now = datetime.now(timezone.utc)
 
+        # Settings first, so everything below runs under the current rules.
+        self.refresh_remote_config(now_ts)
+
         tickers = self.client.binary_tickers()
         products = self._refresh_products(now_ts)
         rounds = build_rounds(tickers, self.cfg.api.underlying, products)
@@ -468,6 +567,10 @@ class Engine:
                          rnd.round_id, rnd.strikes,
                          rnd.expiry.strftime("%H:%M:%SZ"), rnd.spot)
             if rnd.seconds_to_expiry(now) <= 0:
+                continue
+            # Disarmed stops new entries only. Settlement, exits and manual
+            # orders above have already run.
+            if not self.cfg.enabled:
                 continue
             self.try_enter(rnd, now, atr_ok, atr)
 
