@@ -49,3 +49,37 @@ export function InfoIcon({ className = 'h-4 w-4' }) {
     </svg>
   )
 }
+
+export function PencilIcon({ className = 'h-3.5 w-3.5' }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M11.3 2.4a1.4 1.4 0 0 1 2 2l-7.4 7.4-2.7.7.7-2.7z"
+            stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M10.2 3.5 12.5 5.8" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  )
+}
+
+export function ResetIcon({ className = 'h-3.5 w-3.5' }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.7" stroke="currentColor" strokeWidth="1.4"
+            strokeLinecap="round" />
+      <path d="M12.6 1.9v2.7H9.9" stroke="currentColor" strokeWidth="1.4"
+            strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function TrashIcon({ className = 'h-3.5 w-3.5' }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M2.8 4.3h10.4M6.3 4.3V3.1a.9.9 0 0 1 .9-.9h1.6a.9.9 0 0 1 .9.9v1.2"
+            stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M4.2 4.3l.6 8.2a1 1 0 0 0 1 .9h4.4a1 1 0 0 0 1-.9l.6-8.2"
+            stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M6.8 6.8v4M9.2 6.8v4" stroke="currentColor" strokeWidth="1.2"
+            strokeLinecap="round" />
+    </svg>
+  )
+}

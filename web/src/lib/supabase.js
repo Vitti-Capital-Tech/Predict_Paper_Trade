@@ -78,6 +78,40 @@ export async function createAccount(name, startingBalance) {
   return data?.[0] ?? null
 }
 
+/**
+ * Remove an account.
+ *
+ * `.select()` is not decoration. With RLS on and no delete policy, PostgREST
+ * removes nothing, returns no error, and reports success - so the row silently
+ * stays and the button looks broken for no stated reason. Asking for the
+ * deleted rows back turns that into something we can report.
+ */
+export async function deleteAccount(id) {
+  const { data, error } = await supabase
+    .from('accounts')
+    .delete()
+    .eq('id', id)
+    .select()
+  if (error) throw error
+  if (!data?.length) {
+    throw new Error(
+      'Delete was refused by the database — run supabase/migrations/'
+      + '009_delete_accounts.sql once.')
+  }
+  return data[0]
+}
+
+/** Open positions on an account, so a delete can refuse to strand them. */
+export async function countOpenPositions(accountId) {
+  const { count, error } = await supabase
+    .from('positions')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', accountId)
+    .eq('status', 'open')
+  if (error) throw error
+  return count ?? 0
+}
+
 export async function updateAccount(id, patch) {
   const { data, error } = await supabase
     .from('accounts')
