@@ -97,3 +97,9 @@ body {
 .slider-theme:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.35);
 }
+
+/* A number field that carries a unit needs the spinners gone, or the arrows
+   and the unit fight over the same few pixels on the right. */
+.no-spin::-webkit-outer-spin-button,
+.no-spin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.no-spin { -moz-appearance: textfield; appearance: textfield; }

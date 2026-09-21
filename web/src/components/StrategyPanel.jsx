@@ -80,13 +80,36 @@ function Field({ label, hint, info, children, wide = false }) {
   )
 }
 
-function Num({ value, onChange, step = 1, min, max }) {
+/**
+ * A number field that wears its unit.
+ *
+ * The unit sits inside the box rather than in a line underneath, so it is
+ * still readable while you are typing into the field it belongs to.
+ */
+function Num({ value, onChange, step = 1, min, max, unit, prefix }) {
   return (
-    <input
-      type="number" className={inputCls} value={value ?? ''}
-      step={step} min={min} max={max}
-      onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
-    />
+    <div className="relative mt-1">
+      {prefix && (
+        <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2
+                         text-sm text-slate-500">
+          {prefix}
+        </span>
+      )}
+      <input
+        type="number"
+        className={`no-spin nums w-full rounded-lg border border-white/10 bg-ink-800 py-1.5
+                    text-sm text-slate-200 outline-none focus:border-sky-500/50
+                    ${prefix ? 'pl-6' : 'pl-2.5'} ${unit ? 'pr-9' : 'pr-2.5'}`}
+        value={value ?? ''} step={step} min={min} max={max}
+        onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+      />
+      {unit && (
+        <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2
+                         text-[11px] text-slate-500">
+          {unit}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -285,12 +308,12 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                 })}
               </div>
             </Field>
-            <Field label="Min age" info="How long a round must have been listed before entering. A round lists ~20 minutes before expiry and the book is chaotic for the first seconds, so this waits for quotes to settle." hint="seconds since the round listed">
-              <Num value={draft.min_seconds_since_launch}
+            <Field label="Min age" info="How long a round must have been listed before entering. A round lists ~20 minutes before expiry and the book is chaotic for the first seconds, so this waits for quotes to settle." hint="since the round listed">
+              <Num value={draft.min_seconds_since_launch} unit="s"
                    onChange={(v) => set('min_seconds_since_launch', v)} />
             </Field>
             <Field label="Min to expiry" info="Do not open anything with less than this left. Near expiry there is no time for the trade to work and the book thins badly. Delta halts trading in the final 60 seconds regardless." hint="no entries inside this">
-              <Num value={draft.min_seconds_to_expiry}
+              <Num value={draft.min_seconds_to_expiry} unit="s"
                    onChange={(v) => set('min_seconds_to_expiry', v)} />
             </Field>
           </Section>
@@ -305,18 +328,19 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                 />
               </div>
             </Field>
-            <Field label="Candles" info="How many candles the ATR averages over. 14 is the standard period — more candles means a slower, steadier reading." hint="ATR period">
-              <Num value={draft.atr_period} min={2} onChange={(v) => set('atr_period', v)} />
+            <Field label="Candles" info="How many candles the ATR averages over. 14 is the standard period — more candles means a slower, steadier reading.">
+              <Num value={draft.atr_period} min={2} unit="bars"
+                   onChange={(v) => set('atr_period', v)} />
             </Field>
             <Field label="Minimum ATR" info="Skip the round unless average true range is above this. It is the &quot;only trade when BTC is actually moving&quot; rule. Set it to 0 to trade regardless." hint="0 = no gate">
-              <Num value={draft.atr_min} step={10} min={0}
+              <Num value={draft.atr_min} step={10} min={0} unit="pts"
                    onChange={(v) => set('atr_min', v)} />
             </Field>
           </Section>
 
           <Section title="Entry">
-            <Field label="Odds (1:N)" info="How cheap a wing must be. 1:4 means risk 1 to win 4, so the contract must cost at most $0.20. A higher number demands a cheaper contract and takes fewer trades." hint={`max price $${maxPrice.toFixed(4)}`}>
-              <Num value={draft.wing_odds} step={0.5} min={0.5}
+            <Field label="Odds" info="How cheap a wing must be. 1:4 means risk 1 to win 4, so the contract must cost at most $0.20. A higher number demands a cheaper contract and takes fewer trades." hint={`max price $${maxPrice.toFixed(4)}`}>
+              <Num value={draft.wing_odds} step={0.5} min={0.5} prefix="1:"
                    onChange={(v) => set('wing_odds', v)} />
             </Field>
             <Field label="Convention" info="What &quot;1:4&quot; means as a price. Risk:reward gives 1/(1+4) = $0.20. Payout multiple gives 1/4 = $0.25.">
@@ -358,8 +382,8 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
               </div>
             </Field>
             {draft.exit_trigger === 'atm' ? (
-              <Field label="ATM band" info="How close spot must come to the strike to count as at-the-money." hint="points either side of the strike">
-                <Num value={draft.exit_atm_band} step={5} min={0}
+              <Field label="ATM band" info="How close spot must come to the strike to count as at-the-money." hint="either side of the strike">
+                <Num value={draft.exit_atm_band} step={5} min={0} unit="pts"
                      onChange={(v) => set('exit_atm_band', v)} />
               </Field>
             ) : (
@@ -369,12 +393,12 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                   ? 'past the strike, your way'
                   : 'against you — a stop'}
               >
-                <Num value={draft.exit_points} step={5} min={0}
+                <Num value={draft.exit_points} step={5} min={0} unit="pts"
                      onChange={(v) => set('exit_points', v)} />
               </Field>
             )}
-            <Field label="Flatten before expiry" info="Force-close everything this many seconds before settlement instead of letting it settle. Blank means hold, so the contract finishes at exactly $1.00 or $0.00." hint="seconds; blank = hold to settlement">
-              <Num value={draft.flatten_before_expiry_sec}
+            <Field label="Flatten before expiry" info="Force-close everything this many seconds before settlement instead of letting it settle. Blank means hold, so the contract finishes at exactly $1.00 or $0.00." hint="blank = hold">
+              <Num value={draft.flatten_before_expiry_sec} unit="s"
                    onChange={(v) => set('flatten_before_expiry_sec', v)} />
             </Field>
             <Field label="Mode" info="Which yardstick measures the exit. Spot vs strike watches BTC against your strike. Bid watches what the contract itself is worth." hint="spot vs strike, or the contract's own bid">
@@ -411,15 +435,15 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
             </div>
             <Field
               label="Investment per leg"
-              hint="dollars"
+             
               info="How much to put on each leg. Contracts follow from the price, the same way the ticket works — $25 at $0.05 is 500 contracts. There is no contract-count option because Predict does not offer one."
             >
-              <Num value={draft.investment_per_leg ?? 25} step={5} min={1}
+              <Num value={draft.investment_per_leg ?? 25} step={5} min={1} prefix="$"
                    onChange={(v) => set('investment_per_leg', v)} />
             </Field>
 
             <Field label="Max open rounds" info="How many rounds may hold open positions at once. Rounds start every 15 minutes and overlap, so without a cap exposure stacks up across several at a time.">
-              <Num value={draft.max_concurrent_rounds} min={1}
+              <Num value={draft.max_concurrent_rounds} min={1} unit="rounds"
                    onChange={(v) => set('max_concurrent_rounds', v)} />
             </Field>
           </Section>
