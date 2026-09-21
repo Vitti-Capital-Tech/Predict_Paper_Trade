@@ -94,16 +94,10 @@ class Engine:
         self.portfolio = Portfolio(cfg.portfolio, cfg.data_dir, cfg.run_name,
                                    store=self.store)
         # Positions live in memory, so anything still open when the last worker
-        # stopped is stranded until someone picks it up. Do that before the
-        # first poll, so settlement and the panel's Close button reach it.
-        if cfg.recover_open_positions:
-            try:
-                rows = self.store.adoptable_positions(cfg.adopt_stale_after_sec)
-                n = self.portfolio.adopt(rows)
-                if n:
-                    log.info("adopted %d open position(s) from earlier runs", n)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("could not recover open positions: %s", exc)
+        # stopped is stranded until someone picks it up. Try before the first
+        # poll, and keep trying - see maybe_adopt.
+        self._adopt_at: float = 0.0
+        self.maybe_adopt(time.time())
         self.atr_gate = AtrGate(
             self.client, cfg.atr.candle_symbol, cfg.atr.resolution,
             cfg.atr.period, cfg.atr.min_atr, cfg.atr.refresh_sec, cfg.atr.enabled)
@@ -263,6 +257,30 @@ class Engine:
                 continue
             self.portfolio.settle_position(
                 pos, price, now, self._last_spot.get(pos.symbol))
+
+    # ---- recovery -------------------------------------------------------
+    def maybe_adopt(self, now_ts: float) -> None:
+        """Take over positions no live worker is managing.
+
+        Retried on a timer rather than only at startup. A worker that replaces
+        another cleanly starts while the outgoing heartbeat is still seconds
+        old, so the positions are correctly *not* adopted at that moment - and
+        with a startup-only sweep nobody ever came back for them once the old
+        run went quiet. A tidy restart stranded exactly the positions this is
+        supposed to rescue.
+        """
+        if not self.cfg.recover_open_positions:
+            return
+        if (now_ts - self._adopt_at) < self.cfg.adopt_stale_after_sec:
+            return
+        self._adopt_at = now_ts
+        try:
+            rows = self.store.adoptable_positions(self.cfg.adopt_stale_after_sec)
+            n = self.portfolio.adopt(rows)
+            if n:
+                log.info("adopted %d open position(s) no live worker was managing", n)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not recover open positions: %s", exc)
 
     # ---- whose rules apply --------------------------------------------
     def _cfg_for(self, pos):
@@ -640,6 +658,7 @@ class Engine:
 
         # Settings first, so everything below runs under the current rules.
         self.refresh_remote_config(now_ts)
+        self.maybe_adopt(now_ts)
 
         tickers = self.client.binary_tickers()
         products = self._refresh_products(now_ts)
