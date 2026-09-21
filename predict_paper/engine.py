@@ -137,6 +137,9 @@ class Engine:
             row.get("require_both_wings", c.entry.require_both_wings))
         c.entry.trade_middle = bool(row.get("trade_middle", c.entry.trade_middle))
         c.entry.size_contracts = int(row.get("size_contracts") or c.entry.size_contracts)
+        c.entry.size_mode = row.get("size_mode") or c.entry.size_mode
+        c.entry.investment_per_leg = self._num(
+            row, "investment_per_leg", c.entry.investment_per_leg)
         c.entry.max_slippage = self._num(row, "max_slippage", c.entry.max_slippage)
 
         c.exit.mode = row.get("exit_mode") or c.exit.mode
@@ -269,7 +272,20 @@ class Engine:
             return
 
         legs = [l for l in decision.legs if l.ok]
-        qty = self.cfg.entry.size_contracts
+
+        def size_for(leg) -> int:
+            """Contracts to buy on this leg.
+
+            A dollar budget has to be converted at the leg's own price: the two
+            wings are rarely priced alike, so one fixed count would put very
+            different money on each.
+            """
+            if self.cfg.entry.size_mode != "investment":
+                return int(self.cfg.entry.size_contracts)
+            price = leg.quoted_price
+            if not price or price <= 0:
+                return 0
+            return int(round(self.cfg.entry.investment_per_leg / price))
 
         # Price every leg first; with require_both_wings, a round is all-or-nothing,
         # so a leg that cannot fill must not leave the other one on naked.
@@ -283,6 +299,14 @@ class Engine:
                 if self.cfg.entry.require_both_wings:
                     return
                 continue
+            qty = size_for(leg)
+            if qty < 1:
+                log.info("SKIP   %-18s %s: size rounds to zero at %.4f",
+                         rnd.round_id, leg.role, leg.quoted_price or 0.0)
+                if self.cfg.entry.require_both_wings:
+                    return
+                continue
+
             book = self._book(leg.contract.symbol)
             fill = self.fills.simulate("buy", qty, book, leg.contract.best_bid,
                                        leg.contract.best_ask, leg.contract.mark_price)

@@ -84,6 +84,12 @@ class EntryConfig:
     trade_middle: bool = False
     middle_side: str = "auto"  # auto | call | put
 
+    # contracts -> a fixed count, so the depth consumed is the same every time
+    # investment -> a fixed dollar amount, so risk per leg is constant but the
+    #               count rises as the price falls, which is where the book is
+    #               thinnest. See README.
+    size_mode: str = "contracts"
+    investment_per_leg: float = 25.0
     size_contracts: int = 100
     one_entry_per_round: bool = True
 

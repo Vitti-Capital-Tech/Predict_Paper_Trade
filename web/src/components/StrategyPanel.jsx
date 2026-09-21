@@ -34,10 +34,46 @@ function Section({ title, children }) {
   )
 }
 
-function Field({ label, hint, children, wide = false }) {
+/**
+ * The small (i) beside a label.
+ *
+ * Shown on hover, and on tap: `focus-within` covers touch, where there is no
+ * hover state at all and a hover-only tooltip is simply invisible.
+ */
+function InfoDot({ text }) {
+  return (
+    <span className="group/info relative inline-flex">
+      <button
+        type="button" tabIndex={0} aria-label={text}
+        onClick={(e) => e.preventDefault()}
+        className="flex h-3.5 w-3.5 items-center justify-center rounded-full border
+                   border-slate-600 text-[8px] font-bold leading-none text-slate-500
+                   transition-colors hover:border-sky-500 hover:text-sky-400
+                   focus:border-sky-500 focus:text-sky-400 focus:outline-none"
+      >
+        i
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1.5 w-56
+                   -translate-x-1/2 rounded-lg border border-white/10 bg-ink-950 px-2.5
+                   py-2 text-[11px] leading-snug text-slate-300 opacity-0 shadow-xl
+                   shadow-black/60 transition-opacity group-hover/info:opacity-100
+                   group-focus-within/info:opacity-100"
+      >
+        {text}
+      </span>
+    </span>
+  )
+}
+
+function Field({ label, hint, info, children, wide = false }) {
   return (
     <label className={`block ${wide ? 'col-span-2' : ''}`}>
-      <span className="block text-[11px] text-slate-500">{label}</span>
+      <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
+        {label}
+        {info && <InfoDot text={info} />}
+      </span>
       {children}
       {hint && <span className="mt-0.5 block text-[10px] text-slate-600">{hint}</span>}
     </label>
@@ -213,7 +249,7 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
       {open && (
         <>
           <Section title="ATR gate">
-            <Field label="Chart">
+            <Field label="Chart" info="Which candles the ATR is measured on. 15m smooths out noise; 1m reacts faster but fires on moves too small to trade.">
               <div className="mt-1">
                 <Dropdown
                   ariaLabel="ATR resolution" value={draft.atr_resolution}
@@ -222,25 +258,25 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                 />
               </div>
             </Field>
-            <Field label="Candles" hint="ATR period">
+            <Field label="Candles" info="How many candles the ATR averages over. 14 is the standard period — more candles means a slower, steadier reading." hint="ATR period">
               <Num value={draft.atr_period} min={2} onChange={(v) => set('atr_period', v)} />
             </Field>
-            <Field label="Minimum ATR" hint="0 = no gate">
+            <Field label="Minimum ATR" info="Skip the round unless average true range is above this. It is the &quot;only trade when BTC is actually moving&quot; rule. Set it to 0 to trade regardless." hint="0 = no gate">
               <Num value={draft.atr_min} step={10} min={0}
                    onChange={(v) => set('atr_min', v)} />
             </Field>
           </Section>
 
           <Section title="Timing">
-            <Field label="Start time">
+            <Field label="Start time" info="The bot only opens positions after this time of day, in the timezone below. Leave both blank to trade around the clock.">
               <input type="time" className={inputCls} value={draft.session_start ?? ''}
                      onChange={(e) => set('session_start', e.target.value || null)} />
             </Field>
-            <Field label="End time" hint="both blank = all hours">
+            <Field label="End time" info="The bot stops opening positions after this. Open positions still exit and settle normally." hint="both blank = all hours">
               <input type="time" className={inputCls} value={draft.session_end ?? ''}
                      onChange={(e) => set('session_end', e.target.value || null)} />
             </Field>
-            <Field label="Timezone">
+            <Field label="Timezone" info="Which clock the start and end times are read in.">
               <div className="mt-1">
                 <Dropdown
                   ariaLabel="Session timezone" value={draft.session_timezone}
@@ -249,7 +285,7 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                 />
               </div>
             </Field>
-            <Field label="Days" wide>
+            <Field label="Days" info="Weekdays the bot may open positions on. A greyed day is skipped entirely." wide>
               <div className="mt-1 flex flex-wrap gap-1">
                 {DAYS.map((d, i) => {
                   const on = (draft.weekdays ?? []).includes(i)
@@ -268,22 +304,22 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                 })}
               </div>
             </Field>
-            <Field label="Min age" hint="seconds since the round listed">
+            <Field label="Min age" info="How long a round must have been listed before entering. A round lists ~20 minutes before expiry and the book is chaotic for the first seconds, so this waits for quotes to settle." hint="seconds since the round listed">
               <Num value={draft.min_seconds_since_launch}
                    onChange={(v) => set('min_seconds_since_launch', v)} />
             </Field>
-            <Field label="Min to expiry" hint="no entries inside this">
+            <Field label="Min to expiry" info="Do not open anything with less than this left. Near expiry there is no time for the trade to work and the book thins badly. Delta halts trading in the final 60 seconds regardless." hint="no entries inside this">
               <Num value={draft.min_seconds_to_expiry}
                    onChange={(v) => set('min_seconds_to_expiry', v)} />
             </Field>
           </Section>
 
           <Section title="Entry">
-            <Field label="Odds (1:N)" hint={`max price $${maxPrice.toFixed(4)}`}>
+            <Field label="Odds (1:N)" info="How cheap a wing must be. 1:4 means risk 1 to win 4, so the contract must cost at most $0.20. A higher number demands a cheaper contract and takes fewer trades." hint={`max price $${maxPrice.toFixed(4)}`}>
               <Num value={draft.wing_odds} step={0.5} min={0.5}
                    onChange={(v) => set('wing_odds', v)} />
             </Field>
-            <Field label="Convention">
+            <Field label="Convention" info="What &quot;1:4&quot; means as a price. Risk:reward gives 1/(1+4) = $0.20. Payout multiple gives 1/4 = $0.25.">
               <div className="mt-1">
                 <Dropdown
                   ariaLabel="Odds convention" value={draft.odds_convention}
@@ -293,14 +329,14 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                 />
               </div>
             </Field>
-            <Field label="Both wings">
+            <Field label="Both wings" info="The strategy buys the low-strike Put and the high-strike Call together — a bet that BTC moves hard either way. Required skips the round unless both qualify and both can fill, so you never end up holding one leg as an accidental directional bet.">
               <Toggle
                 on={Boolean(draft.require_both_wings)}
                 onChange={(v) => set('require_both_wings', v)}
                 label={draft.require_both_wings ? 'Required' : 'Either alone'}
               />
             </Field>
-            <Field label="Middle strike">
+            <Field label="Middle strike" info="Each round has 3 strikes. The wings are the outer two. The middle sits nearest spot, so it is far likelier to win and far more expensive — hence its own lower bar. Leave it off until you know what the wings alone earn.">
               <Toggle
                 on={Boolean(draft.trade_middle)}
                 onChange={(v) => set('trade_middle', v)}
@@ -310,7 +346,7 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
           </Section>
 
           <Section title="Exit">
-            <Field label="Trigger">
+            <Field label="Trigger" info="What closes the position. ITM: spot moved past your strike the right way. OTM: it moved against you — a stop. ATM: spot came back near the strike.">
               <div className="mt-1">
                 <Dropdown
                   ariaLabel="Exit trigger" value={draft.exit_trigger}
@@ -322,13 +358,13 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
               </div>
             </Field>
             {draft.exit_trigger === 'atm' ? (
-              <Field label="ATM band" hint="points either side of the strike">
+              <Field label="ATM band" info="How close spot must come to the strike to count as at-the-money." hint="points either side of the strike">
                 <Num value={draft.exit_atm_band} step={5} min={0}
                      onChange={(v) => set('exit_atm_band', v)} />
               </Field>
             ) : (
               <Field
-                label="Points"
+                label="Points" info="How far past the strike spot must travel before the exit fires."
                 hint={draft.exit_trigger === 'itm'
                   ? 'past the strike, your way'
                   : 'against you — a stop'}
@@ -337,11 +373,11 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                      onChange={(v) => set('exit_points', v)} />
               </Field>
             )}
-            <Field label="Flatten before expiry" hint="seconds; blank = hold to settlement">
+            <Field label="Flatten before expiry" info="Force-close everything this many seconds before settlement instead of letting it settle. Blank means hold, so the contract finishes at exactly $1.00 or $0.00." hint="seconds; blank = hold to settlement">
               <Num value={draft.flatten_before_expiry_sec}
                    onChange={(v) => set('flatten_before_expiry_sec', v)} />
             </Field>
-            <Field label="Mode" hint="spot vs strike, or the contract's own bid">
+            <Field label="Mode" info="Which yardstick measures the exit. Spot vs strike watches BTC against your strike. Bid watches what the contract itself is worth." hint="spot vs strike, or the contract's own bid">
               <div className="mt-1">
                 <Dropdown
                   ariaLabel="Exit mode" value={draft.exit_mode}
@@ -373,11 +409,39 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                 <span>$0.10</span>
               </div>
             </div>
-            <Field label="Contracts per leg">
-              <Num value={draft.size_contracts} min={1}
-                   onChange={(v) => set('size_contracts', v)} />
+            <Field
+              label="Size by"
+              info="Whether a leg is sized as a number of contracts or a dollar amount."
+            >
+              <div className="mt-1">
+                <Dropdown
+                  ariaLabel="Sizing mode" value={draft.size_mode ?? 'contracts'}
+                  onChange={(v) => set('size_mode', v)}
+                  options={[{ value: 'contracts', label: 'Contracts' },
+                            { value: 'investment', label: 'Dollars' }]}
+                />
+              </div>
             </Field>
-            <Field label="Max open rounds">
+
+            {(draft.size_mode ?? 'contracts') === 'investment' ? (
+              <Field
+                label="Investment per leg"
+                hint="dollars"
+                info="A fixed dollar amount each time; contracts are worked out from the price, as the manual ticket does. Keeps risk constant, but buys the most contracts on the cheapest wings — which is exactly where the book is thinnest."
+              >
+                <Num value={draft.investment_per_leg} step={5} min={1}
+                     onChange={(v) => set('investment_per_leg', v)} />
+              </Field>
+            ) : (
+              <Field
+                label="Contracts per leg"
+                info="A fixed number of contracts each time, each paying $1 if correct. Keeps slippage predictable because you consume the same depth every round, but your dollar risk swings with price."
+              >
+                <Num value={draft.size_contracts} min={1}
+                     onChange={(v) => set('size_contracts', v)} />
+              </Field>
+            )}
+            <Field label="Max open rounds" info="How many rounds may hold open positions at once. Rounds start every 15 minutes and overlap, so without a cap exposure stacks up across several at a time.">
               <Num value={draft.max_concurrent_rounds} min={1}
                    onChange={(v) => set('max_concurrent_rounds', v)} />
             </Field>
@@ -402,6 +466,12 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                   // The gate has no switch of its own any more: a minimum of
                   // zero is what turns it off.
                   patch.atr_enabled = Number(patch.atr_min) > 0
+                  // Only send columns the row actually has. A field from a
+                  // migration that has not been run would otherwise 400 the
+                  // whole update and take every other edit down with it.
+                  for (const k of Object.keys(patch)) {
+                    if (!(k in saved)) delete patch[k]
+                  }
                   persist(patch)
                 }}
                 disabled={!dirty || busy}
