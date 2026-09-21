@@ -32,3 +32,64 @@ body {
   50% { opacity: 0.35; }
 }
 .live-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+
+/* ---------------------------------------------- native form controls ----
+   A range input and a time input render with the browser's own chrome: a grey
+   track, a light clock icon, a white spin area. Against this palette they read
+   as somebody else's widgets dropped into the page, so both are restyled to
+   the same ink/sky vocabulary as everything around them. */
+
+/* Tells the engine to draw its built-in parts (the time field's segments and
+   picker icon, autofill, spin buttons) from the dark palette rather than the
+   light one. Without it the clock glyph stays black on a dark field. */
+.field-dark { color-scheme: dark; }
+
+.field-dark::-webkit-calendar-picker-indicator {
+  filter: invert(62%) sepia(14%) saturate(460%) hue-rotate(184deg) brightness(92%);
+  cursor: pointer;
+  opacity: 0.75;
+}
+.field-dark::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+
+/* Range: a thin ink track with a sky thumb, matching the toggles. Track and
+   thumb have to be declared once per engine - the pseudo-elements are not
+   interchangeable and a combined selector is dropped whole by both. */
+.slider-theme {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+}
+.slider-theme::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--color-ink-700);
+}
+.slider-theme::-moz-range-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--color-ink-700);
+}
+.slider-theme::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -5px;              /* centres a 14px thumb on a 4px track */
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  background: #38bdf8;
+  border: 2px solid var(--color-ink-900);
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.45);
+}
+.slider-theme::-moz-range-thumb {
+  height: 14px;
+  width: 14px;
+  border: 2px solid var(--color-ink-900);
+  border-radius: 9999px;
+  background: #38bdf8;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.45);
+}
+.slider-theme:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.35);
+}

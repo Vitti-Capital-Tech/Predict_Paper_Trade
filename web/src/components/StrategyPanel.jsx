@@ -17,8 +17,9 @@ import Dropdown from './Dropdown'
 const ATR_RESOLUTIONS = ['1m', '3m', '5m', '15m', '30m', '1h']
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
-const inputCls = `nums mt-1 w-full rounded-lg border border-white/10 bg-ink-800 px-2.5 py-1.5
-                  text-sm text-slate-200 outline-none focus:border-sky-500/50`
+const inputCls = `field-dark nums mt-1 w-full rounded-lg border border-white/10 bg-ink-800
+                  px-2.5 py-1.5 text-sm text-slate-200 outline-none
+                  focus:border-sky-500/50`
 
 function Section({ title, hint, children }) {
   return (
@@ -157,8 +158,9 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
 
   return (
     <div className="rounded-xl border border-white/10 bg-ink-900">
-      {/* The arm switch saves on click rather than via Save below: a stop
-          control that needs a second confirmation is the wrong shape. */}
+      {/* Arming is its own switch, not a filter. It saves on flip rather than
+          waiting for Save below: a stop control that needs a second
+          confirmation is the wrong shape. */}
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
         <div className="flex items-center gap-3">
           <span className={`relative flex h-2.5 w-2.5 shrink-0 rounded-full ${
@@ -172,15 +174,15 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
             <h3 className="text-sm font-semibold text-slate-100">Automated strategy</h3>
             <p className="text-[11px] text-slate-500">
               {trading
-                ? 'Armed — the worker is trading these rules'
+                ? 'Running — the worker is trading these rules'
                 : armed
-                  ? 'Armed, but no worker is running to trade it'
-                  : 'Disarmed — no new entries. Open positions still settle.'}
+                  ? 'On, but no worker is running to trade it'
+                  : 'Off — no new entries. Open positions still settle.'}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <button
             onClick={() => setOpen((v) => !v)}
             className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300
@@ -188,14 +190,27 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
           >
             {open ? 'Hide filters' : 'Filters'}
           </button>
+
           <button
+            type="button"
+            role="switch"
+            aria-checked={armed}
+            aria-label="Start automated trading"
             onClick={() => persist({ enabled: !armed })}
             disabled={busy}
-            className={`rounded-lg px-4 py-1.5 text-xs font-semibold text-white
-                        transition-colors disabled:opacity-50 ${
-              armed ? 'bg-rose-600 hover:bg-rose-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+            className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-ink-800
+                       px-3 py-1.5 transition-colors hover:border-white/25
+                       disabled:opacity-50"
           >
-            {armed ? 'Disarm' : 'Arm'}
+            <span className={`text-xs font-semibold ${
+              armed ? 'text-emerald-400' : 'text-slate-500'}`}>
+              {armed ? 'ON' : 'OFF'}
+            </span>
+            <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+              armed ? 'bg-emerald-500' : 'bg-slate-600'}`}>
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow
+                                transition-all ${armed ? 'left-[18px]' : 'left-0.5'}`} />
+            </span>
           </button>
         </div>
       </div>
@@ -359,7 +374,7 @@ export default function StrategyPanel({ workerLive, onSlippageChange }) {
                 type="range" min="0.01" max="0.10" step="0.01"
                 value={draft.max_slippage}
                 onChange={(e) => set('max_slippage', Number(e.target.value))}
-                className="mt-2 w-full accent-sky-500"
+                className="slider-theme mt-2 w-full"
               />
             </Field>
             <Field label="Contracts per leg">

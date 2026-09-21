@@ -13,7 +13,8 @@ import RulesModal from './RulesModal'
 import { HourglassIcon, ClockIcon, PauseIcon, InfoIcon } from './icons'
 
 const PRESETS = [5, 25, 50]
-const SLIPPAGE_OPTIONS = [0.01, 0.02, 0.05, 0.1, 0.25]
+const SLIPPAGE_MIN = 0.01
+const SLIPPAGE_MAX = 0.10
 
 // Delta halts trading for the final minute of a round. The worker enforces
 // the same window, so the button must not offer what would be refused.
@@ -598,16 +599,28 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
                          text-right text-sm text-slate-200 outline-none focus:border-sky-500/50"
             />
 
-            <div className="mt-3 flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-300">Slippage Tolerance</span>
-              <Dropdown
-                ariaLabel="Slippage tolerance"
+            {/* Same control and same range as the one in Filters, because it
+                is the same number: the cap on how far a fill may land above
+                the price shown. */}
+            <div className="mt-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-slate-300">Slippage Tolerance</span>
+                <span className="nums text-xs text-slate-400">
+                  ${Number(slippage).toFixed(2)}
+                </span>
+              </div>
+              <input
+                type="range"
+                aria-label="Slippage tolerance"
+                min={SLIPPAGE_MIN} max={SLIPPAGE_MAX} step="0.01"
                 value={slippage}
-                onChange={(v) => onSlippageChange(Number(v))}
-                options={SLIPPAGE_OPTIONS.map((s) => ({ value: s, label: `$${s.toFixed(2)}` }))}
-                className="w-28"
-                align="right"
+                onChange={(e) => onSlippageChange(Number(e.target.value))}
+                className="slider-theme mt-2 w-full"
               />
+              <div className="nums flex justify-between text-[10px] text-slate-600">
+                <span>${SLIPPAGE_MIN.toFixed(2)}</span>
+                <span>${SLIPPAGE_MAX.toFixed(2)}</span>
+              </div>
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-3">

@@ -116,6 +116,10 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:py-6">
+        {/* Filters and the automation switch sit above the ticket: they
+            govern what the bot does with every round, so they belong where
+            they are read first rather than under the thing they control. */}
+        <StrategyPanel workerLive={workerLive} onSlippageChange={setSlippage} />
         <TradePanel
           account={account}
           workerLive={workerLive}
@@ -123,7 +127,6 @@ export default function App() {
           onSlippageChange={setSlippage}
           onOrderResolved={() => setTradeTick((n) => n + 1)}
         />
-        <StrategyPanel workerLive={workerLive} onSlippageChange={setSlippage} />
         <PortfolioTabs accountId={accountId} slippage={slippage}
                        refreshKey={tradeTick} />
       </main>
