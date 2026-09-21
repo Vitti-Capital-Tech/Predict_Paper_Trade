@@ -128,7 +128,7 @@ export default function App() {
           onSlippageChange={setSlippage}
           onOrderResolved={() => setTradeTick((n) => n + 1)}
         />
-        <PortfolioTabs accountId={accountId} slippage={slippage}
+        <PortfolioTabs account={account} accountId={accountId} slippage={slippage}
                        refreshKey={tradeTick} />
       </main>
     </div>

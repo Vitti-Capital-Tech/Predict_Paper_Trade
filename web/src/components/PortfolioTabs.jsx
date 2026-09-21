@@ -3,6 +3,7 @@ import {
   fetchAccountPositions, fetchRecentCloses, placeManualClose,
 } from '../lib/supabase'
 import { fetchOrderbook, walkBook } from '../lib/delta'
+import { summarise, fmt } from '../lib/stats'
 
 /**
  * Positions / Recent Trades, laid out like Delta's Predict portfolio cards.
@@ -206,8 +207,29 @@ function ClosedCard({ p }) {
   )
 }
 
-export default function PortfolioTabs({ accountId, slippage = 0.05, refreshKey = 0 }) {
+/**
+ * One number in the strip. `tone` colours it by sign where that means
+ * something; a win rate is not better for being green.
+ */
+function Stat({ label, value, sub, tone }) {
+  const colour = tone === undefined ? 'text-slate-100'
+    : tone >= 0 ? 'text-emerald-400' : 'text-rose-400'
+  return (
+    <div className="min-w-0">
+      <p className="truncate text-[11px] text-slate-500">{label}</p>
+      <p className={`nums mt-0.5 truncate text-base font-semibold ${colour}`}>{value}</p>
+      {sub && <p className="nums truncate text-[10px] text-slate-600">{sub}</p>}
+    </div>
+  )
+}
+
+export default function PortfolioTabs({ account, accountId, slippage = 0.05,
+                                        refreshKey = 0 }) {
   const [tab, setTab] = useState('positions')
+  // Which trades the figures describe. Mixing hand-placed trades into a
+  // round win rate makes it meaningless: a manual single leg is not a
+  // round the strategy played.
+  const [scope, setScope] = useState('strategy')
   const [positions, setPositions] = useState([])
   const [marks, setMarks] = useState({})
   const [error, setError] = useState(null)
@@ -343,8 +365,93 @@ export default function PortfolioTabs({ accountId, slippage = 0.05, refreshKey =
 
   const rows = tab === 'positions' ? open : closed
 
+  // Realised performance, from the same helper the CLI report uses so the two
+  // can never disagree.
+  const scoped = useMemo(() => positions.filter(
+    (p) => scope === 'all' ? true
+      : scope === 'manual' ? p.role === 'manual'
+        : p.role !== 'manual'), [positions, scope])
+
+  const perf = useMemo(
+    () => summarise(scoped, Number(account?.starting_balance) || 0),
+    [scoped, account?.starting_balance])
+
+  // Unrealised, from the depth-walked marks already fetched for the cards, so
+  // this is what the book would actually pay to close everything right now -
+  // not a top-of-book figure that no size could get.
+  const scopedOpen = useMemo(
+    () => scoped.filter((p) => p.status === 'open'), [scoped])
+  const unreal = useMemo(() => scopedOpen.reduce((a, p) => {
+    const m = marks[p.symbol]
+    if (!m?.ok) return a
+    return a + (m.price - Number(p.entry_price)) * Number(p.qty)
+  }, 0), [scopedOpen, marks])
+  const committed = useMemo(
+    () => scopedOpen.reduce((a, p) => a + Number(p.entry_price) * Number(p.qty), 0),
+    [scopedOpen])
+
   return (
     <div className="rounded-xl border border-white/10 bg-ink-900">
+      {/* Performance. Round win rate leads because on a strangle most legs
+          lose by design - a leg rate near 25% is normal and says nothing. */}
+      <div className="flex items-center justify-between gap-3 px-4 pt-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Performance
+        </h3>
+        <div className="flex gap-0.5 rounded-lg border border-white/10 bg-ink-800 p-0.5">
+          {[['strategy', 'Strategy'], ['manual', 'Manual'], ['all', 'All']].map(
+            ([k, label]) => (
+              <button
+                key={k} onClick={() => setScope(k)}
+                className={`rounded-md px-2.5 py-1 text-[11px] transition-colors ${
+                  scope === k ? 'bg-sky-500/20 text-sky-300'
+                    : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                {label}
+              </button>
+            ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 border-b border-white/5 px-4 pb-3 pt-2
+                      sm:grid-cols-3 lg:grid-cols-6">
+        <Stat
+          label="Realised P&L"
+          value={fmt.usd(perf.totalPnl)}
+          tone={perf.totalPnl}
+          sub={`${fmt.pct(perf.returnPct)} of starting`}
+        />
+        <Stat
+          label="Unrealised"
+          value={scopedOpen.length ? fmt.usd(unreal) : '—'}
+          tone={scopedOpen.length ? unreal : undefined}
+          sub={scopedOpen.length
+            ? `${scopedOpen.length} open · ${fmt.usd(committed)} in` : 'nothing open'}
+        />
+        <Stat
+          label="Round win rate"
+          value={perf.rounds ? fmt.pct(perf.roundWinRate, 0) : '—'}
+          sub={perf.rounds ? `${perf.rounds} round${perf.rounds > 1 ? 's' : ''} settled` : ''}
+        />
+        <Stat
+          label="Avg / round"
+          value={perf.rounds ? fmt.usd(perf.avgPerRound) : '—'}
+          tone={perf.rounds ? perf.avgPerRound : undefined}
+          sub={perf.rounds ? `${fmt.pct(perf.legWinRate, 0)} of legs won` : ''}
+        />
+        <Stat
+          label="Slippage paid"
+          value={fmt.usd(perf.slippageCost)}
+          sub={perf.totalCost ? `${fmt.pct(100 * perf.slippageCost / perf.totalCost)} of cost` : ''}
+        />
+        <Stat
+          label="Max drawdown"
+          value={fmt.usd(perf.maxDrawdown)}
+          tone={perf.maxDrawdown ? -1 : undefined}
+          sub="worst run of rounds"
+        />
+      </div>
+
       <div className="flex gap-6 border-b border-white/5 px-4">
         {[['positions', 'Positions', open.length],
           ['trades', 'Recent Trades', closed.length]].map(([key, label, n]) => (
