@@ -426,3 +426,4 @@ If Supabase is unreachable the worker keeps trading and keeps writing
   changes, set `portfolio.taker_fee_rate`.
 - The ATR gate uses `BTCUSDT` candles. Do not switch it to `BTCUSD` — that
   series is stale and flat, which would silently disable the filter.
+
