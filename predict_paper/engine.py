@@ -97,6 +97,9 @@ class Engine:
         # stopped is stranded until someone picks it up. Try before the first
         # poll, and keep trying - see maybe_adopt.
         self._adopt_at: float = 0.0
+        # (account_id, round_id) held open by ANY worker, so a restart does
+        # not re-enter a round its predecessor is already in.
+        self._open_round_keys: set = set()
         self.maybe_adopt(time.time())
         self.atr_gate = AtrGate(
             self.client, cfg.atr.candle_symbol, cfg.atr.resolution,
@@ -274,6 +277,12 @@ class Engine:
         if (now_ts - self._adopt_at) < self.cfg.adopt_stale_after_sec:
             return
         self._adopt_at = now_ts
+
+        keys = self.store.open_round_keys()
+        if keys is not None:
+            self._open_round_keys = {
+                (k.get("account_id"), k.get("round_id")) for k in keys}
+
         try:
             rows = self.store.adoptable_positions(self.cfg.adopt_stale_after_sec)
             n = self.portfolio.adopt(rows)
@@ -349,7 +358,11 @@ class Engine:
                   atr_ok: bool, atr: Optional[float]) -> None:
         cfg = acct.cfg
         aid = acct.account_id
-        if cfg.entry.one_entry_per_round and self.portfolio.has_round(rnd.round_id, aid):
+        # Memory first, then what the table says: this worker may have started
+        # while another still held a position in this round.
+        if cfg.entry.one_entry_per_round and (
+                self.portfolio.has_round(rnd.round_id, aid)
+                or (aid, rnd.round_id) in self._open_round_keys):
             return
         if len(self.portfolio.open_rounds(aid)) >= cfg.portfolio.max_concurrent_rounds:
             return
@@ -457,6 +470,7 @@ class Engine:
                 rnd.round_id, leg.contract.symbol, leg.role, leg.contract.side,
                 leg.contract.strike, fill, now, decision.spot, atr,
                 account_id=aid)
+            self._open_round_keys.add((aid, rnd.round_id))
 
     # ---- manual orders from the trade panel -----------------------------
     def process_manual_orders(self, by_symbol: Dict[str, Contract],
