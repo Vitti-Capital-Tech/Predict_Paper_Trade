@@ -401,16 +401,15 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
             </Field>
             <Field
               label="Both extremes"
-              info="Which side to buy at the two outer strikes. Opposite is a strangle — PUT low and CALL high — which pays on a hard move either way and is only cheap while price sits between them. Both YES or Both NO buys the same side at both strikes: a directional bet, and the only one available when price has run outside the strikes."
+              info="Which side to buy at the two outer strikes. Opposite is a strangle — PUT low and CALL high — which pays on a hard move either way and is only cheap while price sits between them. Same buys one side at both strikes: a directional bet, and the only one on offer once price has run outside the strikes. It picks the side for you, because only one of the two can ever be cheap."
             >
               <div className="mt-1">
                 <Dropdown
                   ariaLabel="Extremes mode"
                   value={draft.extremes_mode ?? 'opposite'}
                   onChange={(v) => set('extremes_mode', v)}
-                  options={[{ value: 'opposite', label: 'Opposite (strangle)' },
-                            { value: 'both_yes', label: 'Both YES' },
-                            { value: 'both_no', label: 'Both NO' }]}
+                  options={[{ value: 'opposite', label: 'Opposite' },
+                            { value: 'same', label: 'Same' }]}
                 />
               </div>
             </Field>

@@ -146,18 +146,35 @@ class Round:
                   strangle. Both sit OTM while spot is between them, which is
                   what makes them cheap enough to clear the odds test, and a
                   hard move either way pays one of them.
-        both_yes  Call at both extremes - a directional bet that price rises,
-                  spread across two strikes.
-        both_no   Put at both extremes - the same bet, downward.
+        same      The same side at both extremes - a directional bet spread
+                  over two strikes. Which side is not a choice to make by hand:
+                  at most one of the two pairs can ever be cheap, because calls
+                  at both extremes need spot below them and puts at both need
+                  spot above. So take whichever pair the market is offering.
         """
         strikes = self.strikes
         if len(strikes) < 3:
             return {"low": None, "high": None}
         lo, hi = strikes[0], strikes[-1]
-        if mode == "both_yes":
-            return {"low": self.get(lo, "call"), "high": self.get(hi, "call")}
-        if mode == "both_no":
-            return {"low": self.get(lo, "put"), "high": self.get(hi, "put")}
+
+        if mode == "same":
+            def pair(side):
+                return self.get(lo, side), self.get(hi, side)
+
+            def cost(p):
+                if p[0] is None or p[1] is None:
+                    return None
+                if p[0].best_ask is None or p[1].best_ask is None:
+                    return None
+                return p[0].best_ask + p[1].best_ask
+
+            priced = [(c, p) for p in (pair("call"), pair("put"))
+                      if (c := cost(p)) is not None]
+            if not priced:
+                return {"low": None, "high": None}
+            _, best = min(priced, key=lambda x: x[0])
+            return {"low": best[0], "high": best[1]}
+
         return {"low": self.get(lo, "put"), "high": self.get(hi, "call")}
 
     def middle_strike(self) -> Optional[float]:

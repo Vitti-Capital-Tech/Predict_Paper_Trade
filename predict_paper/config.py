@@ -82,8 +82,8 @@ class EntryConfig:
     trade_wings: bool = True
     # Which side to buy at each extreme strike.
     #   opposite  Put low + Call high - a strangle, pays on a move either way
-    #   both_yes  Call at both - directional, upward
-    #   both_no   Put at both - directional, downward
+    #   same      the same side at both, whichever the market is offering -
+    #             a directional bet spread over two strikes
     extremes_mode: str = "opposite"
     require_both_wings: bool = True
     trade_middle: bool = False
