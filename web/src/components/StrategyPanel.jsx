@@ -17,6 +17,11 @@ import Dropdown from './Dropdown'
 const ATR_RESOLUTIONS = ['1m', '3m', '5m', '15m', '30m', '1h']
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
+// The table stores seconds; the form asks in minutes, which is how anyone
+// actually thinks about "stop entering three minutes before expiry".
+const toMin = (sec) => (sec === null || sec === undefined ? null : Number(sec) / 60)
+const toSec = (min) => (min === null || min === undefined ? null : Math.round(Number(min) * 60))
+
 const inputCls = `field-dark nums mt-1 w-full rounded-lg border border-white/10 bg-ink-800
                   px-2.5 py-1.5 text-sm text-slate-200 outline-none
                   focus:border-sky-500/50`
@@ -341,12 +346,21 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
               </div>
             </Field>
             <Field label="Min age" info="How long a round must have been listed before entering. A round lists ~20 minutes before expiry and the book is chaotic for the first seconds, so this waits for quotes to settle." hint="since the round listed">
-              <Num value={draft.min_seconds_since_launch} unit="s"
-                   onChange={(v) => set('min_seconds_since_launch', v)} />
+              <Num value={toMin(draft.min_seconds_since_launch)} unit="min" step={0.5}
+                   onChange={(v) => set('min_seconds_since_launch', toSec(v))} />
             </Field>
             <Field label="Min to expiry" info="Do not open anything with less than this left. Near expiry there is no time for the trade to work and the book thins badly. Delta halts trading in the final 60 seconds regardless." hint="no entries inside this">
-              <Num value={draft.min_seconds_to_expiry} unit="s"
-                   onChange={(v) => set('min_seconds_to_expiry', v)} />
+              <Num value={toMin(draft.min_seconds_to_expiry)} unit="min" step={0.5}
+                   onChange={(v) => set('min_seconds_to_expiry', toSec(v))} />
+            </Field>
+
+            <Field
+              label="Max age"
+              info="Stop considering a round once it is this old. Late in a round the remaining time is too short for a move to develop."
+              hint="since the round listed"
+            >
+              <Num value={toMin(draft.max_seconds_since_launch)} unit="min" step={0.5}
+                   onChange={(v) => set('max_seconds_since_launch', toSec(v))} />
             </Field>
           </Section>
 
@@ -385,6 +399,22 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
                 />
               </div>
             </Field>
+            <Field
+              label="Both extremes"
+              info="Which side to buy at the two outer strikes. Opposite is a strangle — PUT low and CALL high — which pays on a hard move either way and is only cheap while price sits between them. Both YES or Both NO buys the same side at both strikes: a directional bet, and the only one available when price has run outside the strikes."
+            >
+              <div className="mt-1">
+                <Dropdown
+                  ariaLabel="Extremes mode"
+                  value={draft.extremes_mode ?? 'opposite'}
+                  onChange={(v) => set('extremes_mode', v)}
+                  options={[{ value: 'opposite', label: 'Opposite (strangle)' },
+                            { value: 'both_yes', label: 'Both YES' },
+                            { value: 'both_no', label: 'Both NO' }]}
+                />
+              </div>
+            </Field>
+
             <Field label="Both wings" info="The strategy buys the low-strike Put and the high-strike Call together — a bet that BTC moves hard either way. Required skips the round unless both qualify and both can fill, so you never end up holding one leg as an accidental directional bet.">
               <Toggle
                 on={Boolean(draft.require_both_wings)}
@@ -429,9 +459,9 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
                      onChange={(v) => set('exit_points', v)} />
               </Field>
             )}
-            <Field label="Flatten before expiry" info="Force-close everything this many seconds before settlement instead of letting it settle. Blank means hold, so the contract finishes at exactly $1.00 or $0.00." hint="blank = hold">
-              <Num value={draft.flatten_before_expiry_sec} unit="s"
-                   onChange={(v) => set('flatten_before_expiry_sec', v)} />
+            <Field label="Flatten before expiry" info="Force-close everything this long before settlement instead of letting it settle. Blank means hold, so the contract finishes at exactly $1.00 or $0.00." hint="blank = hold">
+              <Num value={toMin(draft.flatten_before_expiry_sec)} unit="min" step={0.5}
+                   onChange={(v) => set('flatten_before_expiry_sec', toSec(v))} />
             </Field>
             <Field label="Mode" info="Which yardstick measures the exit. Spot vs strike watches BTC against your strike. Bid watches what the contract itself is worth." hint="spot vs strike, or the contract's own bid">
               <div className="mt-1">

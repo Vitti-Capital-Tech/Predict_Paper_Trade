@@ -127,16 +127,38 @@ class Round:
             return None
         return (now - self.launch_time).total_seconds()
 
+    @property
+    def complete(self) -> bool:
+        """Has the venue finished listing this round?
+
+        Delta lists exactly three strikes. While a round is still appearing,
+        fewer are quoted - and `strikes[0]` / `strikes[-1]` then name contracts
+        that are not the real extremes. Entering on those buys a strike that
+        stops being the edge of the round a few seconds later.
+        """
+        return len(self.strikes) >= 3
+
     # ---- strike roles ---------------------------------------------------
-    def wing_legs(self) -> Dict[str, Optional[Contract]]:
-        """'1st and last strike' as a long strangle: Put at the lowest strike,
-        Call at the highest. Both are OTM while spot sits between them, which is
-        what makes them cheap enough to clear a 1:5 odds test."""
+    def wing_legs(self, mode: str = "opposite") -> Dict[str, Optional[Contract]]:
+        """The two extreme strikes, and which side to buy at each.
+
+        opposite  Put at the lowest strike, Call at the highest - a long
+                  strangle. Both sit OTM while spot is between them, which is
+                  what makes them cheap enough to clear the odds test, and a
+                  hard move either way pays one of them.
+        both_yes  Call at both extremes - a directional bet that price rises,
+                  spread across two strikes.
+        both_no   Put at both extremes - the same bet, downward.
+        """
         strikes = self.strikes
-        if len(strikes) < 2:
+        if len(strikes) < 3:
             return {"low": None, "high": None}
-        return {"low": self.get(strikes[0], "put"),
-                "high": self.get(strikes[-1], "call")}
+        lo, hi = strikes[0], strikes[-1]
+        if mode == "both_yes":
+            return {"low": self.get(lo, "call"), "high": self.get(hi, "call")}
+        if mode == "both_no":
+            return {"low": self.get(lo, "put"), "high": self.get(hi, "put")}
+        return {"low": self.get(lo, "put"), "high": self.get(hi, "call")}
 
     def middle_strike(self) -> Optional[float]:
         strikes = self.strikes
@@ -153,13 +175,26 @@ class Round:
 
 def build_rounds(tickers: List[Dict[str, Any]], asset: str = "BTC",
                  products: Optional[List[Dict[str, Any]]] = None) -> List[Round]:
-    """Assemble Round objects from a bulk ticker response."""
+    """Assemble Round objects from a bulk ticker response.
+
+    `/v2/tickers` carries no state, so a contract the venue has listed but not
+    opened still appears there. Taken at face value that produced entries on
+    premarket strikes, and - while a round was mid-listing - on strikes that
+    were not the extremes they looked like. `products` is the authority on
+    what is actually live, so when it is available the tickers are filtered
+    through it.
+    """
     launch_by_symbol: Dict[str, datetime] = {}
+    live: set = set()
     for p in products or []:
+        sym = p.get("symbol")
+        if not sym:
+            continue
+        live.add(sym)
         lt = p.get("launch_time")
-        if p.get("symbol") and lt:
+        if lt:
             try:
-                launch_by_symbol[p["symbol"]] = datetime.fromisoformat(
+                launch_by_symbol[sym] = datetime.fromisoformat(
                     str(lt).replace("Z", "+00:00"))
             except ValueError:
                 pass
@@ -168,6 +203,10 @@ def build_rounds(tickers: List[Dict[str, Any]], asset: str = "BTC",
     for t in tickers:
         c = Contract.from_ticker(t)
         if c is None or c.asset != asset:
+            continue
+        # No product list means no way to tell; trust the feed rather than
+        # refusing to trade at all.
+        if live and c.symbol not in live:
             continue
         rnd = by_expiry.get(c.expiry_code)
         if rnd is None:

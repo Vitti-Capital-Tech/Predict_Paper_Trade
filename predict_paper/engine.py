@@ -97,9 +97,11 @@ class Engine:
         # stopped is stranded until someone picks it up. Try before the first
         # poll, and keep trying - see maybe_adopt.
         self._adopt_at: float = 0.0
-        # (account_id, round_id) held open by ANY worker, so a restart does
-        # not re-enter a round its predecessor is already in.
-        self._open_round_keys: set = set()
+        # Open positions held by ANY worker, keyed two ways: by symbol so a
+        # restart does not re-buy a leg it already holds, and by round so the
+        # both-wings rule knows a leg arrived on an earlier tick.
+        self._held_symbols: set = set()
+        self._held_roles: dict = {}
         self.maybe_adopt(time.time())
         self.atr_gate = AtrGate(
             self.client, cfg.atr.candle_symbol, cfg.atr.resolution,
@@ -208,6 +210,9 @@ class Engine:
         c.entry.require_both_wings = bool(
             row.get("require_both_wings", c.entry.require_both_wings))
         c.entry.trade_middle = bool(row.get("trade_middle", c.entry.trade_middle))
+        c.entry.extremes_mode = row.get("extremes_mode") or c.entry.extremes_mode
+        c.entry.middle_needs_both_wings = bool(
+            row.get("middle_needs_both_wings", c.entry.middle_needs_both_wings))
         c.entry.investment_per_leg = self._num(
             row, "investment_per_leg", c.entry.investment_per_leg)
         c.entry.max_slippage = self._num(row, "max_slippage", c.entry.max_slippage)
@@ -280,8 +285,13 @@ class Engine:
 
         keys = self.store.open_round_keys()
         if keys is not None:
-            self._open_round_keys = {
-                (k.get("account_id"), k.get("round_id")) for k in keys}
+            self._held_symbols = {
+                (k.get("account_id"), k.get("symbol")) for k in keys}
+            roles: dict = {}
+            for k in keys:
+                roles.setdefault((k.get("account_id"), k.get("round_id")),
+                                 set()).add(k.get("role"))
+            self._held_roles = roles
 
         try:
             rows = self.store.adoptable_positions(self.cfg.adopt_stale_after_sec)
@@ -358,16 +368,19 @@ class Engine:
                   atr_ok: bool, atr: Optional[float]) -> None:
         cfg = acct.cfg
         aid = acct.account_id
-        # Memory first, then what the table says: this worker may have started
-        # while another still held a position in this round.
-        if cfg.entry.one_entry_per_round and (
-                self.portfolio.has_round(rnd.round_id, aid)
-                or (aid, rnd.round_id) in self._open_round_keys):
-            return
-        if len(self.portfolio.open_rounds(aid)) >= cfg.portfolio.max_concurrent_rounds:
+        # Roles already on in this round, from memory and from the table: a
+        # leg bought ten minutes ago still counts toward the both-wings rule.
+        held = set(self._held_roles.get((aid, rnd.round_id), set()))
+        held |= {p.role for p in self.portfolio.open_positions
+                 if p.round_id == rnd.round_id and p.account_id == aid}
+
+        # The cap counts rounds we are not already in.
+        if (rnd.round_id not in self.portfolio.open_rounds(aid)
+                and len(self.portfolio.open_rounds(aid))
+                >= cfg.portfolio.max_concurrent_rounds):
             return
 
-        decision = acct.strategy.evaluate(rnd, now, atr_ok, atr)
+        decision = acct.strategy.evaluate(rnd, now, atr_ok, atr, held=held)
         if not decision.enter:
             key = (rnd.round_id, "|".join(decision.reasons))
             if key not in self._logged_rejects:
@@ -378,7 +391,11 @@ class Engine:
                                          spot=decision.spot)
             return
 
-        legs = [l for l in decision.legs if l.ok]
+        legs = [l for l in decision.legs if l.ok
+                and (aid, l.contract.symbol) not in self._held_symbols
+                and l.role not in held]
+        if not legs:
+            return
 
         def size_for(leg) -> int:
             """Contracts to buy on this leg, from a dollar budget.
@@ -470,7 +487,8 @@ class Engine:
                 rnd.round_id, leg.contract.symbol, leg.role, leg.contract.side,
                 leg.contract.strike, fill, now, decision.spot, atr,
                 account_id=aid)
-            self._open_round_keys.add((aid, rnd.round_id))
+            self._held_symbols.add((aid, leg.contract.symbol))
+            self._held_roles.setdefault((aid, rnd.round_id), set()).add(leg.role)
 
     # ---- manual orders from the trade panel -----------------------------
     def process_manual_orders(self, by_symbol: Dict[str, Contract],

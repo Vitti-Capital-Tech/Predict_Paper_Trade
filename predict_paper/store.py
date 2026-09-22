@@ -232,7 +232,7 @@ class SupabaseStore:
             return None
 
     def open_round_keys(self) -> Optional[List[Dict[str, Any]]]:
-        """(account_id, round_id) for every open position, whoever owns it.
+        """Open positions, whoever owns them - account, round, symbol and role.
 
         Separate from `adoptable_positions`, which deliberately ignores
         positions a live worker still holds. "Has this round already been
@@ -242,7 +242,7 @@ class SupabaseStore:
         try:
             r = self.session.get("%s/positions" % self.base, timeout=self.timeout,
                                  params={"status": "eq.open",
-                                         "select": "account_id,round_id",
+                                         "select": "account_id,round_id,symbol,role",
                                          "limit": "1000"})
             if r.status_code >= 400:
                 self._note_failure("open rounds -> %s" % r.status_code)

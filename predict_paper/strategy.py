@@ -117,7 +117,16 @@ class Strategy:
         return LegSignal(role, contract, max_price, ask, True, "ok")
 
     def evaluate(self, rnd: Round, now: datetime, atr_ok: bool,
-                 atr: Optional[float]) -> RoundDecision:
+                 atr: Optional[float],
+                 held: Optional[set] = None) -> RoundDecision:
+        """`held` names roles already open in this round for this account.
+
+        A leg that is already on counts as satisfied: if one extreme filled
+        earlier and the other only clears its odds ten minutes later, the pair
+        should still complete rather than being refused because both did not
+        qualify on the same tick.
+        """
+        held = held or set()
         dec = RoundDecision(round_id=rnd.round_id, enter=False, atr=atr, spot=rnd.spot)
 
         if not atr_ok:
@@ -131,18 +140,31 @@ class Strategy:
         entry = self.cfg.entry
         legs: List[LegSignal] = []
 
+        # A round still being listed shows fewer than three strikes, and its
+        # "extremes" are whichever happen to be quoted - not the real edges.
+        if not rnd.complete:
+            return dec.reject("round still listing (%d of 3 strikes)"
+                              % len(rnd.strikes))
+
         if entry.trade_wings:
-            wings = rnd.wing_legs()
+            wings = rnd.wing_legs(entry.extremes_mode)
             low = self._leg_signal("wing_low", wings["low"], self.cfg.wing_max_price)
             high = self._leg_signal("wing_high", wings["high"], self.cfg.wing_max_price)
             legs.extend([low, high])
-            if entry.require_both_wings and not (low.ok and high.ok):
-                dec.legs = legs
-                bad = [l for l in (low, high) if not l.ok]
-                return dec.reject("wings: " + "; ".join(
-                    "%s %s" % (l.role, l.reason) for l in bad))
+            if entry.require_both_wings:
+                low_done = low.ok or "wing_low" in held
+                high_done = high.ok or "wing_high" in held
+                if not (low_done and high_done):
+                    dec.legs = legs
+                    bad = [l for l in (low, high)
+                           if not l.ok and l.role not in held]
+                    return dec.reject("wings: " + "; ".join(
+                        "%s %s" % (l.role, l.reason) for l in bad))
 
-        if entry.trade_middle:
+        # The middle only rides along with a pair already on both extremes.
+        wings_ok = entry.trade_wings and all(
+            l.ok or l.role in held for l in legs[:2]) and len(legs) >= 2
+        if entry.trade_middle and (wings_ok or not entry.middle_needs_both_wings):
             mids = rnd.middle_legs()
             candidates: List[Contract] = []
             if entry.middle_side in ("auto", "call") and mids["call"]:

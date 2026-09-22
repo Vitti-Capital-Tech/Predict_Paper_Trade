@@ -80,8 +80,16 @@ class EntryConfig:
     # happens to be nearby; this is the explicit cap.
     max_slippage: Optional[float] = None
     trade_wings: bool = True
+    # Which side to buy at each extreme strike.
+    #   opposite  Put low + Call high - a strangle, pays on a move either way
+    #   both_yes  Call at both - directional, upward
+    #   both_no   Put at both - directional, downward
+    extremes_mode: str = "opposite"
     require_both_wings: bool = True
     trade_middle: bool = False
+    # The middle leg is an addition to a round already held on both extremes,
+    # not a trade of its own.
+    middle_needs_both_wings: bool = True
     middle_side: str = "auto"  # auto | call | put
 
     # Dollars per leg, the way Predict itself sizes: you name the money and the
