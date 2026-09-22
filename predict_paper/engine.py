@@ -23,6 +23,17 @@ from .strategy import Strategy
 log = logging.getLogger(__name__)
 
 
+def index_symbol_for(asset: str) -> str:
+    """Delta's spot index for an asset.
+
+    The gate has to measure the volatility of the thing being traded: an ETH
+    strategy reading BTC's ATR is gated on a number that has nothing to do
+    with it.
+    """
+    return {"BTC": ".DEXBTUSDT", "ETH": ".DEETHUSDT"}.get(
+        asset.upper(), ".DE%sUSDT" % asset.upper())
+
+
 def _top_of_book(book, side: str):
     """Best price actually resting in the book.
 
@@ -63,13 +74,13 @@ class AccountStrategy:
             client, cfg.atr.candle_symbol, cfg.atr.resolution, cfg.atr.period,
             cfg.atr.min_atr, cfg.atr.refresh_sec, cfg.atr.enabled)
         self._atr_key = (cfg.atr.resolution, cfg.atr.period, cfg.atr.min_atr,
-                         cfg.atr.enabled)
+                         cfg.atr.enabled, cfg.atr.candle_symbol)
         self.stamp = None
 
     def rebuild_gate_if_needed(self, client) -> None:
         """The gate caches candles against its resolution and period."""
         key = (self.cfg.atr.resolution, self.cfg.atr.period, self.cfg.atr.min_atr,
-               self.cfg.atr.enabled)
+               self.cfg.atr.enabled, self.cfg.atr.candle_symbol)
         if key != self._atr_key:
             self._atr_key = key
             self.atr_gate = AtrGate(
@@ -187,6 +198,7 @@ class Engine:
         """Lay one settings row over a Config."""
         c.enabled = bool(row.get("enabled", c.enabled))
         c.api.underlying = row.get("underlying") or c.api.underlying
+        c.atr.candle_symbol = index_symbol_for(c.api.underlying)
 
         c.atr.enabled = bool(row.get("atr_enabled", c.atr.enabled))
         c.atr.resolution = row.get("atr_resolution") or c.atr.resolution
@@ -694,7 +706,13 @@ class Engine:
 
         tickers = self.client.binary_tickers()
         products = self._refresh_products(now_ts)
-        rounds = build_rounds(tickers, self.cfg.api.underlying, products)
+        # One round set per underlying any account trades, not one for the
+        # worker. An account's `underlying` was being written to its own config
+        # and then never read, so an ETH strategy quietly traded BTC.
+        assets = {a.cfg.api.underlying for a in self.accounts.values()}
+        assets.add(self.cfg.api.underlying)
+        rounds_by_asset = {a: build_rounds(tickers, a, products) for a in assets}
+        rounds = [r for rs in rounds_by_asset.values() for r in rs]
 
         by_symbol: Dict[str, Contract] = {}
         self._expiry_by_symbol: Dict[str, datetime] = {}
@@ -729,6 +747,8 @@ class Engine:
             # and manual orders above have already run for every account.
             for acct in list(self.accounts.values()):
                 if not acct.cfg.enabled:
+                    continue
+                if rnd.asset != acct.cfg.api.underlying:
                     continue
                 ok, value = acct.atr_gate.passes(now_ts)
                 self.try_enter(acct, rnd, now, ok, value)
