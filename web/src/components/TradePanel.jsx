@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchBinaryTickers, fetchCandles, fetchSpotTicker,
-  buildRounds, legFor, sizeOrder, availableAssets, spotSymbolFor,
+  buildRounds, legFor, sizeOrder, spotSymbolFor,
   RESOLUTIONS, lookbackHoursFor, barResolutionFor, indexSymbolFor,
   mergeLiveBar, fetchOrderbook, previewOrder, topOfBook, fetchDailyRange,
 } from '../lib/delta'
@@ -67,7 +67,6 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
   // to the nearest round and the strike closest to spot, as before.
   const initial = useRef(parseRoute()).current
 
-  const [assets, setAssets] = useState([initial?.asset ?? 'BTC'])
   const [asset, setAsset] = useState(initial?.asset ?? 'BTC')
   const [resolution, setResolution] = useState('15m')
   const [rounds, setRounds] = useState([])
@@ -99,8 +98,6 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
         fetchBinaryTickers(),
         fetchSpotTicker(spotSymbolFor(asset)).catch(() => null),
       ])
-      const found = availableAssets(tickers)
-      if (found.length) setAssets(found)
       const built = buildRounds(tickers, asset)
       setRounds(built)
       if (spotT) setSpotTicker(spotT)
@@ -136,19 +133,11 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
     return () => { alive = false; clearInterval(t) }
   }, [asset])
 
-  // Follow the selected account's bot onto its market. Switching to an ETH
-  // account otherwise left a BTC chart and a BTC ticket under a panel saying
-  // ETH. Keyed on the account too, so changing the chart by hand afterwards
-  // sticks until you switch accounts again rather than being pulled back on
-  // the next poll.
-  const followed = useRef(null)
+  // The market is the account's strategy setting, full stop. There is no
+  // second place to choose one, so there is nothing to reconcile.
   useEffect(() => {
-    if (!botAsset) return
-    const key = `${accountId}:${botAsset}`
-    if (followed.current === key) return
-    followed.current = key
-    setAsset((prev) => (prev === botAsset ? prev : botAsset))
-  }, [botAsset, accountId])
+    if (botAsset) setAsset((prev) => (prev === botAsset ? prev : botAsset))
+  }, [botAsset])
 
   // A different underlying has different strikes and expiries. Keyed off the
   // previous value rather than a "first render" flag: StrictMode runs effects
@@ -439,13 +428,19 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
         <div className="overflow-hidden rounded-xl border border-white/10 bg-ink-900">
           {/* Market selectors */}
           <div className="flex flex-wrap items-center gap-2 border-b border-white/5 px-4 py-3">
-            <Dropdown
-              ariaLabel="Underlying"
-              value={asset}
-              onChange={(v) => setAsset(v)}
-              options={assets.map((a) => ({ value: a, label: a }))}
-              className="w-28 shrink-0"
-            />
+            {/* Not a control. The market is whatever the account's strategy
+                is set to trade, and a dropdown here offering a different one
+                is how the screen ended up describing two markets at once.
+                Change it in Filters > Entry > Underlying. */}
+            <span
+              aria-label="Underlying"
+              title="Set by this account's strategy — change it in Filters › Entry › Underlying"
+              className="flex w-28 shrink-0 items-center justify-center rounded-lg border
+                         border-white/10 bg-ink-800 px-3 py-2 text-sm font-semibold
+                         text-slate-300"
+            >
+              {asset}
+            </span>
             <Dropdown
               ariaLabel="Threshold"
               value={strike ?? ''}
