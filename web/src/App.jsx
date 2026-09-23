@@ -41,6 +41,7 @@ export default function App() {
   // Bumped when an order resolves, so the portfolio reloads immediately
   // instead of waiting out its own polling interval.
   const [tradeTick, setTradeTick] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
   // Only used to warn when an order is stuck because nothing is filling it.
   const [workerSeenAt, setWorkerSeenAt] = useState(null)
 
@@ -65,6 +66,21 @@ export default function App() {
   }, [])
 
   useEffect(() => { loadAccounts() }, [loadAccounts])
+
+  // Everything already polls, but the intervals are seconds apart and after a
+  // settlement or a config change you want to see the result now rather than
+  // wonder whether the screen is stale. Bumping tradeTick is what a filled
+  // order does, so this reuses that path rather than inventing a second one.
+  const refreshNow = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      await loadAccounts()
+      setTradeTick((n) => n + 1)
+    } finally {
+      // Long enough for the spin to register as a response to the click.
+      setTimeout(() => setRefreshing(false), 500)
+    }
+  }, [loadAccounts])
 
   useEffect(() => {
     const t = setInterval(loadAccounts, 5000)
@@ -105,6 +121,27 @@ export default function App() {
             <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>
           </div>
 
+          {/* Grouped right: justify-between would otherwise strand the
+              refresh button in the middle of the header. */}
+          <div className="flex items-center gap-2">
+          <button
+            onClick={refreshNow}
+            disabled={refreshing}
+            title="Reload accounts, positions and strategy now"
+            aria-label="Refresh"
+            className="rounded-lg border border-white/10 bg-ink-800 p-2 text-slate-400
+                       transition-colors hover:border-white/25 hover:text-slate-100
+                       disabled:opacity-50"
+          >
+            <svg viewBox="0 0 16 16" fill="none"
+                 className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`}>
+              <path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.7" stroke="currentColor"
+                    strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M12.6 1.9v2.7H9.9" stroke="currentColor" strokeWidth="1.5"
+                    strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+
           <AccountBar
             account={account}
             accounts={accounts}
@@ -112,6 +149,7 @@ export default function App() {
             onSelect={setAccountId}
             onAccountsChanged={loadAccounts}
           />
+          </div>
         </div>
       </header>
 
