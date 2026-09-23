@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  fetchBinaryTickers, fetchCandles, fetchSpotTicker,
+  fetchBinaryTickers, fetchBinaryProducts, fetchCandles, fetchSpotTicker,
   buildRounds, legFor, sizeOrder, spotSymbolFor,
   RESOLUTIONS, lookbackHoursFor, barResolutionFor, indexSymbolFor,
   mergeLiveBar, fetchOrderbook, previewOrder, topOfBook, fetchDailyRange,
@@ -88,17 +88,29 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
   // The order we are waiting on, so the toast can report what happened
   // instead of sitting on "Queued" until the user wonders if it worked.
   const watching = useRef(null)
+  // Cached product list; see poll() for why it is on its own refresh clock.
+  const products = useRef({ at: 0, rows: null })
   const [rulesOpen, setRulesOpen] = useState(false)
   const touched = useRef(Boolean(initial))
 
   // Live quotes straight from Delta.
   const poll = useCallback(async () => {
     try {
+      // Quotes move every poll; which contracts are open does not. Refreshing
+      // the product list on its own slower clock keeps this from tripling the
+      // request rate against Delta for a field that changes twice an hour.
+      const now = Date.now()
+      if (now - products.current.at > 15000) {
+        const rows = await fetchBinaryProducts().catch(() => null)
+        // Keep the last good list on a failed fetch: a momentary blank would
+        // otherwise read as "no data" and wave the pre-open strikes through.
+        if (rows) products.current = { at: now, rows }
+      }
       const [tickers, spotT] = await Promise.all([
         fetchBinaryTickers(),
         fetchSpotTicker(spotSymbolFor(asset)).catch(() => null),
       ])
-      const built = buildRounds(tickers, asset)
+      const built = buildRounds(tickers, asset, products.current.rows)
       setRounds(built)
       if (spotT) setSpotTicker(spotT)
       setError(null)

@@ -22,6 +22,22 @@ export function fetchBinaryTickers() {
 }
 
 /**
+ * Products, for `trading_status` — the only field that says whether a
+ * contract will actually accept an order.
+ *
+ * `/v2/tickers` lists a round the moment the venue creates it, several
+ * minutes before it opens, and carries nothing to distinguish the two. So the
+ * panel was offering pre-open strikes whose book is empty and whose ask reads
+ * 1.00. A round is post-only for its first ~5 minutes and cancel-only for its
+ * last moments; a taker order is refused in both.
+ */
+export function fetchBinaryProducts() {
+  return get('/v2/products', {
+    contract_types: BINARY_TYPES, states: 'live', page_size: 200,
+  })
+}
+
+/**
  * Underlying ticker — carries spot and the 24h change the panel header shows.
  * The binary tickers expose `spot_price` but not the underlying's 24h move.
  */
@@ -105,12 +121,23 @@ const num = (v) => (v === null || v === undefined || v === '' ? null : Number(v)
  * Group tickers into rounds. Mirrors predict_paper/rounds.py so the panel and
  * the worker classify strikes identically.
  */
-export function buildRounds(tickers, asset = 'BTC') {
+export function buildRounds(tickers, asset = 'BTC', products = null) {
   const byExpiry = new Map()
+
+  // Symbols the venue will currently take an order on. An absent product list
+  // means no way to tell, so the tickers are trusted as before; a list saying
+  // nothing is tradeable is a real answer, and the usual one in the minute
+  // between a round going cancel-only and its successor opening.
+  const haveProducts = Array.isArray(products) && products.length > 0
+  const live = new Set(
+    (products ?? [])
+      .filter((p) => p?.symbol && (p.trading_status ?? 'operational') === 'operational')
+      .map((p) => p.symbol))
 
   for (const t of tickers ?? []) {
     const p = parseSymbol(t.symbol)
     if (!p || p.asset !== asset) continue
+    if (haveProducts && !live.has(t.symbol)) continue
 
     const q = t.quotes ?? {}
     const leg = {
