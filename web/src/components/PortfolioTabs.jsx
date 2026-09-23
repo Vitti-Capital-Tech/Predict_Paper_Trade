@@ -27,6 +27,28 @@ function whenLabel(iso) {
   return `at ${t}, ${date}`
 }
 
+/** Expiry lives in the round id: BTC-DDMMYYHHMM. */
+function expiryOf(roundId) {
+  const code = String(roundId ?? '').split('-').pop()
+  return /^\d{10}$/.test(code) ? expiryCodeToDate(code) : null
+}
+
+const clockLabel = (d) => (d
+  ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+      .toLowerCase()
+  : '—')
+
+/** Time left, as mm:ss, or hh:mm:ss once it runs past an hour. */
+function countdown(ms) {
+  if (ms === null || ms === undefined) return null
+  const s = Math.max(0, Math.round(ms / 1000))
+  const pad = (n) => String(n).padStart(2, '0')
+  const h = Math.floor(s / 3600)
+  return h > 0
+    ? `${pad(h)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
+    : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`
+}
+
 function Field({ label, value, tone = 'text-slate-200', align = 'text-left', title }) {
   return (
     <div className={align} title={title}>
@@ -52,7 +74,12 @@ function Card({ children }) {
   )
 }
 
-function CardHead({ p, status, tone }) {
+function CardHead({ p, status, tone, now }) {
+  const expiry = expiryOf(p.round_id)
+  const left = expiry && now ? expiry.getTime() - now : null
+  const halted = left !== null && left > 0 && left <= 60000
+  const done = left !== null && left <= 0
+
   return (
     <div className="flex items-start justify-between gap-3">
       <div className="flex min-w-0 items-start gap-2.5">
@@ -61,7 +88,21 @@ function CardHead({ p, status, tone }) {
           <p className="nums truncate text-sm font-semibold text-slate-100">
             BTC above {Number(p.strike).toLocaleString('en-US')}
           </p>
-          <p className="mt-0.5 text-[11px] text-slate-500">{whenLabel(p.entry_time)}</p>
+          {/* Expiry leads: on an open position the question is how long is
+              left, not when it was opened. */}
+          <p className="nums mt-0.5 text-[11px] text-slate-400">
+            Expires {clockLabel(expiry)}
+            {left !== null && (
+              <span className={halted ? 'text-amber-400'
+                : done ? 'text-slate-600' : 'text-slate-500'}>
+                {done ? ' · settling' : ` · ${countdown(left)} left`}
+                {halted && ' (halted)'}
+              </span>
+            )}
+          </p>
+          <p className="mt-0.5 text-[10px] text-slate-600">
+            opened {whenLabel(p.entry_time)}
+          </p>
         </div>
       </div>
       <span className={`shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold ${tone}`}>
@@ -71,7 +112,7 @@ function CardHead({ p, status, tone }) {
   )
 }
 
-function OpenCard({ p, mark, close, onClose, busy, tolerance }) {
+function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
   const invested = Number(p.entry_price) * Number(p.qty)
   const exitPrice = mark?.ok ? mark.price : null
   const value = exitPrice === null ? null : exitPrice * Number(p.qty)
@@ -88,7 +129,7 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance }) {
 
   return (
     <Card>
-      <CardHead p={p} status="Open" tone="bg-sky-500/15 text-sky-400" />
+      <CardHead p={p} status="Open" tone="bg-sky-500/15 text-sky-400" now={now} />
       <div className="mt-3 grid grid-cols-3 gap-3 border-t border-white/5 pt-3">
         <Field label="Invested Amt." value={money(invested)} />
         <Field label="Current Value" value={value === null ? '—' : money(value)}
@@ -159,53 +200,6 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance }) {
   )
 }
 
-function ClosedCard({ p }) {
-  const invested = Number(p.entry_price) * Number(p.qty)
-  const payout = Number(p.exit_price) * Number(p.qty)
-  const fees = Number(p.fees ?? 0)
-  const pnl = payout - invested - fees
-  const settled = p.status === 'settled'
-
-  return (
-    <Card>
-      <CardHead p={p} status="Closed" tone="bg-rose-500/15 text-rose-400" />
-      <div className="mt-3 grid grid-cols-3 gap-3 border-t border-white/5 pt-3">
-        <Field label="Invested Amt." value={money(invested)} />
-        <Field label="Final Payout" value={money(payout)} align="text-center" />
-        <Field
-          label="Realized PnL"
-          value={signed(pnl)}
-          tone={pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}
-          align="text-right"
-        />
-
-        <Field label="Fees" value={money(fees)} />
-        {settled ? (
-          <>
-            <Field
-              label="Settlement Price"
-              value={p.settlement_spot ? money(p.settlement_spot) : '—'}
-              align="text-center"
-              title="Last underlying spot observed before expiry — approximates the settlement mark, not the venue's official figure."
-            />
-            <Field
-              label="Outcome"
-              value={Number(p.exit_price) >= 0.5 ? 'Yes' : 'No'}
-              align="text-right"
-            />
-          </>
-        ) : (
-          <div className="col-span-2 text-right">
-            <p className="text-[11px] text-slate-500">Closed early</p>
-            <p className="mt-0.5 truncate text-xs text-slate-400" title={p.exit_reason}>
-              {p.exit_reason || '—'}
-            </p>
-          </div>
-        )}
-      </div>
-    </Card>
-  )
-}
 
 /**
  * One number in the strip. `tone` colours it by sign where that means
@@ -380,6 +374,13 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
   const [closesOffline, setClosesOffline] = useState(false)
   // Bridges the gap between the click and the row appearing in the next poll.
   const [busy, setBusy] = useState({})
+  // Ticks the expiry countdowns. The data polls are far slower than a second
+  // and a clock that jumps in 2.5s steps reads as broken.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
 
   const load = useCallback(() => {
     if (!accountId) { setPositions([]); return }
@@ -652,6 +653,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
                   close={closes[p.position_id]}
                   busy={Boolean(busy[p.position_id])}
                   tolerance={slippage}
+                  now={now}
                   onClose={requestClose}
                 />
               ))}
