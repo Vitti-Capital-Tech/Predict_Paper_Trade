@@ -17,16 +17,6 @@ const money = (v, d = 2) =>
 
 const signed = (v) => `${Number(v) >= 0 ? '+' : '-'}$${Math.abs(Number(v ?? 0)).toFixed(2)}`
 
-function whenLabel(iso) {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  const t = d.toLocaleTimeString('en-US', {
-    hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase()
-  const date = d.toLocaleDateString('en-US', {
-    day: 'numeric', month: 'long', year: 'numeric' })
-  return `at ${t}, ${date}`
-}
-
 /** Asset and expiry both live in the round id: ETH-DDMMYYHHMM. */
 function assetOf(roundId) {
   const head = String(roundId ?? '').split('-')[0]
@@ -44,15 +34,11 @@ const clockLabel = (d) => (d
       .toLowerCase()
   : '—')
 
-/** Time left, as mm:ss, or hh:mm:ss once it runs past an hour. */
-function countdown(ms) {
-  if (ms === null || ms === undefined) return null
-  const s = Math.max(0, Math.round(ms / 1000))
+/** Time left as hh:mm:ss, zero-padded, the way a position card shows it. */
+function hms(ms) {
+  const s = Math.max(0, Math.round((ms ?? 0) / 1000))
   const pad = (n) => String(n).padStart(2, '0')
-  const h = Math.floor(s / 3600)
-  return h > 0
-    ? `${pad(h)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
-    : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`
+  return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
 }
 
 function Field({ label, value, tone = 'text-slate-200', align = 'text-left', title }) {
@@ -80,7 +66,15 @@ function Card({ children }) {
   )
 }
 
-function CardHead({ p, status, tone, now }) {
+/**
+ * Header of an open position, laid out the way Delta lays one out: what you
+ * bought, when it expires and how long is left, and the move on the right.
+ *
+ * The move is a percentage rather than the "Open" pill that used to sit
+ * there. Every card in this list is open, so the pill said nothing; the
+ * percentage is the one number you actually look for.
+ */
+function CardHead({ p, now, pct }) {
   const expiry = expiryOf(p.round_id)
   const left = expiry && now ? expiry.getTime() - now : null
   const halted = left !== null && left > 0 && left <= 60000
@@ -94,26 +88,30 @@ function CardHead({ p, status, tone, now }) {
           <p className="nums truncate text-sm font-semibold text-slate-100">
             {assetOf(p.round_id)} above {Number(p.strike).toLocaleString('en-US')}
           </p>
-          {/* Expiry leads: on an open position the question is how long is
-              left, not when it was opened. */}
-          <p className="nums mt-0.5 text-[11px] text-slate-400">
-            Expires {clockLabel(expiry)}
+          <p className="nums mt-0.5 text-[11px] text-slate-500">
+            At {clockLabel(expiry)}
             {left !== null && (
-              <span className={halted ? 'text-amber-400'
-                : done ? 'text-slate-600' : 'text-slate-500'}>
-                {done ? ' · settling' : ` · ${countdown(left)} left`}
-                {halted && ' (halted)'}
-              </span>
+              <>
+                <span className="mx-1.5 text-slate-700">|</span>
+                <span className={halted ? 'text-amber-400'
+                  : done ? 'text-slate-600' : 'text-slate-400'}>
+                  {done ? 'settling' : hms(left)}
+                  {halted && ' (halted)'}
+                </span>
+              </>
             )}
-          </p>
-          <p className="mt-0.5 text-[10px] text-slate-600">
-            opened {whenLabel(p.entry_time)}
           </p>
         </div>
       </div>
-      <span className={`shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold ${tone}`}>
-        {status}
-      </span>
+      {pct !== null && (
+        <span
+          title={`Against what you paid, at what the book would pay to close now.`}
+          className={`nums shrink-0 text-sm font-semibold ${
+            pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
+        >
+          {pct >= 0 ? '+' : '-'}{Math.abs(pct).toFixed(2)}%
+        </span>
+      )}
     </div>
   )
 }
@@ -126,6 +124,11 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
   const value = exitPrice === null ? null : exitPrice * Number(p.qty)
   const unreal = value === null ? null : value - invested
 
+  // The move on the position, against what it cost. Delta puts this where the
+  // status pill used to sit, and it is why the card no longer carries a
+  // separate unrealised-PnL column: invested against current value says it.
+  const pct = value === null || !invested ? null : ((value - invested) / invested) * 100
+
   const pending = close?.status === 'pending' || busy
   const rejected = close?.status === 'rejected' ? close.reject_reason : null
   // How far the book's bid for your whole size sits below its top. Shown for
@@ -137,42 +140,36 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
 
   return (
     <Card>
-      <CardHead p={p} status="Open" tone="bg-sky-500/15 text-sky-400" now={now} />
+      <CardHead p={p} now={now} pct={pct} />
+      {/* Three numbers, in the order Delta reads them: what it cost, what it
+          is worth now, what it pays if it comes in. Entry price and contract
+          count were a restatement of the first and third in other units. */}
       <div className="mt-3 grid grid-cols-3 gap-3 border-t border-white/5 pt-3">
-        <Field label="Invested Amt." value={money(invested)}
-               title="What the fill actually cost." />
-        {/* Every contract settles at exactly $1.00 or $0.00, so the winning
-            payout is just the size - the one number the card never showed. */}
         <Field
-          label="Payout if won"
-          value={money(payout)}
-          tone="text-emerald-400"
-          align="text-center"
-          title={`${Number(p.qty).toLocaleString('en-US')} contracts x $1.00 if `
-                 + `${p.side === 'call' ? 'above' : 'below'} `
-                 + `${Number(p.strike).toLocaleString('en-US')} at expiry`}
-        />
-        <Field
-          label="Unrealized PnL"
-          value={unreal === null ? '—' : signed(unreal)}
-          tone={unreal === null ? 'text-slate-400'
-            : unreal >= 0 ? 'text-emerald-400' : 'text-rose-400'}
-          align="text-right"
-        />
-        {/* Contracts is Payout divided by a dollar - a fourth number saying
-            what the third already says. */}
-        <Field
-          label="Entry Price" value={Number(p.entry_price).toFixed(4)}
-          title={Number(p.entry_slippage) > 0
-            ? `Slippage paid: ${money(Number(p.entry_slippage) * Number(p.qty))}`
-              + ` (${Number(p.entry_slippage).toFixed(4)} per contract above the touch)`
-            : 'Filled at the touch price, no slippage.'}
+          label="Invested" value={money(invested)}
+          title={`Filled at ${Number(p.entry_price).toFixed(4)} per contract.`
+                 + (Number(p.entry_slippage) > 0
+                   ? ` Slippage paid: ${money(Number(p.entry_slippage) * Number(p.qty))}.`
+                   : ' No slippage — filled at the touch.')}
         />
         <Field
           label="Current Value"
           value={value === null ? '—' : money(value)}
           align="text-center"
-          title="What the book would pay to close the whole position right now."
+          title={unreal === null
+            ? 'No bid quoted, so there is nothing to value the position against.'
+            : `What the book would pay to close the whole position right now`
+              + ` — ${signed(unreal)} against what you paid.`}
+        />
+        {/* Every contract settles at exactly $1.00 or $0.00, so the winning
+            payout is just the size. */}
+        <Field
+          label="Payout if Correct"
+          value={money(payout)}
+          align="text-right"
+          title={`${Number(p.qty).toLocaleString('en-US')} contracts x $1.00 if `
+                 + `${p.side === 'call' ? 'above' : 'below'} `
+                 + `${Number(p.strike).toLocaleString('en-US')} at expiry`}
         />
       </div>
 
@@ -182,13 +179,12 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
         title={exitPrice === null
           ? (mark?.reason ?? 'No bid quoted — nothing to sell into')
           : `Sells ${Number(p.qty).toLocaleString('en-US')} contracts into the book at an average of ${Number(exitPrice).toFixed(4)}.`}
-        className="mt-3 w-full rounded-lg border border-white/10 bg-ink-700 py-2 text-xs
-                   font-medium text-slate-200 transition-colors hover:border-white/25
-                   hover:bg-ink-600 disabled:cursor-not-allowed disabled:opacity-40"
+        className="mt-3 w-full rounded-lg bg-ink-700/70 py-2 text-xs font-semibold
+                   text-rose-400 transition-colors hover:bg-ink-600
+                   hover:text-rose-300 disabled:cursor-not-allowed
+                   disabled:opacity-40 disabled:hover:bg-ink-700/70"
       >
-        {pending
-          ? 'Closing…'
-          : value === null ? 'Close' : `Close at ${money(value)}`}
+        {pending ? 'Closing…' : 'Close'}
       </button>
 
       {depthCost > 0.0005 && !tooDeep && (
