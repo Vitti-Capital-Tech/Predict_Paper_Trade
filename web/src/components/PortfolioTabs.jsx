@@ -361,30 +361,23 @@ function TradesTable({ positions }) {
                         here would be the same heading meaning two things. The
                         size belongs with the money it bought. */}
                     <td />
-                    <td className="nums px-2 py-1.5 text-right text-slate-400">
+                    <td className="nums px-2 py-1.5 text-right text-slate-400"
+                        title={`${Number(p.qty).toLocaleString('en-US')} contracts at `
+                               + Number(p.entry_price).toFixed(4)}>
                       {money(Number(p.entry_price) * Number(p.qty))}
-                      <span className="ml-1 text-[10px] text-slate-600">
-                        {Number(p.qty).toLocaleString('en-US')} @{' '}
-                        {Number(p.entry_price).toFixed(4)}
-                      </span>
                     </td>
                     <td className="nums px-2 py-1.5 text-right text-slate-400">
                       {p.exit_price === null || p.exit_price === undefined
-                        ? '—'
-                        : (<>
-                            {money(Number(p.exit_price) * Number(p.qty))}
-                            <span className="ml-1 text-[10px] text-slate-600">
-                              @{Number(p.exit_price).toFixed(4)}
-                            </span>
-                          </>)}
+                        ? '—' : money(Number(p.exit_price) * Number(p.qty))}
                     </td>
                     <td className={`nums px-2 py-1.5 text-right ${
                       Number(p.pnl ?? 0) >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
                       {signed(Number(p.pnl ?? 0))}
                     </td>
-                    <td className="px-4 py-1.5 text-[11px] text-slate-500">
-                      {p.exit_price === null || p.exit_price === undefined ? ''
-                        : Number(p.exit_price) >= 0.5 ? 'paid $1.00' : 'expired'}
+                    <td className={`px-4 py-1.5 text-[11px] ${
+                      Number(p.pnl ?? 0) >= 0 ? 'text-emerald-400/70' : 'text-slate-500'}`}>
+                      {p.exit_price === null || p.exit_price === undefined
+                        ? '' : Number(p.pnl ?? 0) >= 0 ? 'Won' : 'Lost'}
                     </td>
                   </tr>
                 ))}
