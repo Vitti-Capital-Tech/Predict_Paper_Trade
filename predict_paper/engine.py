@@ -180,13 +180,17 @@ class Engine:
             if stamp != acct.stamp:
                 acct.stamp = stamp
                 c = acct.cfg
-                log.info("settings %-16s %-8s | %s | ATR>%.0f %s p%d | wing 1:%.0f "
-                         "| exit %s/%s | $%.0f/leg | bal %.2f",
+                log.info("settings %-16s %-8s | %s %s | %s | ATR>%.0f %s p%d | "
+                         "wing 1:%.0f %s (max %.4f) | exit %s/%s | $%.0f/leg | bal %.2f",
                          acct.name, "ARMED" if c.enabled else "DISARMED",
+                         c.api.underlying,
+                         c.entry.extremes_mode + ("+mid" if c.entry.trade_middle else ""),
                          ("session %s" % c.timing.sessions[0]) if c.timing.sessions
                          else "all hours",
                          c.atr.min_atr, c.atr.resolution, c.atr.period,
-                         c.entry.wing_odds, c.exit.mode, c.exit.moneyness_trigger,
+                         c.entry.wing_odds,
+                         "both" if c.entry.require_both_wings else "either",
+                         c.wing_max_price, c.exit.mode, c.exit.moneyness_trigger,
                          c.entry.investment_per_leg, acct.balance)
 
         # An account deleted in the dashboard stops trading here too.
