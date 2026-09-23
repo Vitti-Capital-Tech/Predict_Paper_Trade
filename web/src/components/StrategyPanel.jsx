@@ -135,7 +135,8 @@ function Toggle({ on, onChange, label }) {
   )
 }
 
-export default function StrategyPanel({ account, workerLive, onSlippageChange }) {
+export default function StrategyPanel({ account, workerLive, onSlippageChange,
+                                       onUnderlyingChange }) {
   const [saved, setSaved] = useState(null)   // what the database holds
   const [draft, setDraft] = useState(null)   // what the form shows
   const [busy, setBusy] = useState(false)
@@ -163,6 +164,7 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
         // Never clobber an edit in progress with a poll.
         setDraft((d) => d ?? row)
         onSlippageChange?.(Number(row.max_slippage))
+        onUnderlyingChange?.(row.underlying || 'BTC')
       })
       .catch((e) => {
         const msg = `${e?.message ?? e}`
@@ -170,7 +172,7 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
           setMissing(true)
         } else setError(msg)
       })
-  }, [accountId, onSlippageChange])
+  }, [accountId, onSlippageChange, onUnderlyingChange])
 
   useEffect(() => {
     load()
@@ -194,12 +196,13 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
       setSaved(row)
       setDraft(row)
       onSlippageChange?.(Number(row.max_slippage))
+      onUnderlyingChange?.(row.underlying || 'BTC')
     } catch (e) {
       setError(e.message ?? String(e))
     } finally {
       setBusy(false)
     }
-  }, [accountId, onSlippageChange])
+  }, [accountId, onSlippageChange, onUnderlyingChange])
 
   if (missing) {
     return (

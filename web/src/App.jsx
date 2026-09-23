@@ -42,6 +42,10 @@ export default function App() {
   // instead of waiting out its own polling interval.
   const [tradeTick, setTradeTick] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
+  // The asset the selected account's bot trades. The chart and ticket follow
+  // it, so switching to an ETH account does not leave a BTC screen underneath
+  // a panel that says ETH.
+  const [botAsset, setBotAsset] = useState(null)
   // Only used to warn when an order is stuck because nothing is filling it.
   const [workerSeenAt, setWorkerSeenAt] = useState(null)
 
@@ -158,12 +162,15 @@ export default function App() {
             govern what the bot does with every round, so they belong where
             they are read first rather than under the thing they control. */}
         <StrategyPanel account={account} workerLive={workerLive}
-                       onSlippageChange={setSlippage} />
+                       onSlippageChange={setSlippage}
+                       onUnderlyingChange={setBotAsset} />
         <TradePanel
           account={account}
           workerLive={workerLive}
           slippage={slippage}
           onSlippageChange={setSlippage}
+          botAsset={botAsset}
+          accountId={accountId}
           onOrderResolved={() => setTradeTick((n) => n + 1)}
         />
         <PortfolioTabs account={account} accountId={accountId} slippage={slippage}

@@ -62,7 +62,7 @@ function CandleIcon() {
 }
 
 export default function TradePanel({ account, workerLive, slippage, onSlippageChange,
-                                     onOrderResolved }) {
+                                     botAsset, accountId, onOrderResolved }) {
   // A deep link decides the opening market; without one the panel falls back
   // to the nearest round and the strike closest to spot, as before.
   const initial = useRef(parseRoute()).current
@@ -135,6 +135,20 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
     const t = setInterval(load, 60000)
     return () => { alive = false; clearInterval(t) }
   }, [asset])
+
+  // Follow the selected account's bot onto its market. Switching to an ETH
+  // account otherwise left a BTC chart and a BTC ticket under a panel saying
+  // ETH. Keyed on the account too, so changing the chart by hand afterwards
+  // sticks until you switch accounts again rather than being pulled back on
+  // the next poll.
+  const followed = useRef(null)
+  useEffect(() => {
+    if (!botAsset) return
+    const key = `${accountId}:${botAsset}`
+    if (followed.current === key) return
+    followed.current = key
+    setAsset((prev) => (prev === botAsset ? prev : botAsset))
+  }, [botAsset, accountId])
 
   // A different underlying has different strikes and expiries. Keyed off the
   // previous value rather than a "first render" flag: StrictMode runs effects
