@@ -203,6 +203,11 @@ def build_rounds(tickers: List[Dict[str, Any]], asset: str = "BTC",
     """
     launch_by_symbol: Dict[str, datetime] = {}
     live: set = set()
+    # Whether we were given a product list at all, which is not the same as
+    # whether anything in it is tradeable. Between one round going
+    # cancel-only and the next opening, every binary is shut - a real answer,
+    # and the one that matters most.
+    have_products = bool(products)
     for p in products or []:
         sym = p.get("symbol")
         if not sym:
@@ -228,9 +233,11 @@ def build_rounds(tickers: List[Dict[str, Any]], asset: str = "BTC",
         c = Contract.from_ticker(t)
         if c is None or c.asset != asset:
             continue
-        # No product list means no way to tell; trust the feed rather than
-        # refusing to trade at all.
-        if live and c.symbol not in live:
+        # Only an absent product list means no way to tell. Keying this off
+        # `live` being non-empty instead let the guard switch itself off in
+        # the one window it existed for: with nothing yet operational the set
+        # was empty, so every pre-open strike passed straight through.
+        if have_products and c.symbol not in live:
             continue
         rnd = by_expiry.get(c.expiry_code)
         if rnd is None:
