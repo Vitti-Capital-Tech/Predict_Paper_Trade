@@ -357,16 +357,15 @@ function TradesTable({ positions }) {
                     </td>
                     {/* Settled at is a property of the round, not the leg. */}
                     <td />
-                    <td className="nums px-2 py-1.5 text-right text-slate-500">
-                      {Number(p.qty).toLocaleString('en-US')}
-                    </td>
-                    {/* Money under the money columns. The price is what each
-                        contract cost, not what the leg cost - showing 0.3307
-                        under a heading that says Invested reads as a bug. */}
+                    {/* Legs counts legs on the round row; a contract count
+                        here would be the same heading meaning two things. The
+                        size belongs with the money it bought. */}
+                    <td />
                     <td className="nums px-2 py-1.5 text-right text-slate-400">
                       {money(Number(p.entry_price) * Number(p.qty))}
                       <span className="ml-1 text-[10px] text-slate-600">
-                        @{Number(p.entry_price).toFixed(4)}
+                        {Number(p.qty).toLocaleString('en-US')} @{' '}
+                        {Number(p.entry_price).toFixed(4)}
                       </span>
                     </td>
                     <td className="nums px-2 py-1.5 text-right text-slate-400">

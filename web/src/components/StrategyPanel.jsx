@@ -385,6 +385,25 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange })
           </Section>
 
           <Section title="Entry">
+            {/* The bot's asset, per account. The selector on the chart is a
+                view control - it changes what you are looking at and what the
+                manual ticket buys, and has never had any say over what the
+                strategy trades. */}
+            <Field
+              label="Underlying"
+              info="Which market this account's bot trades. Separate from the asset dropdown on the chart, which only changes what you are viewing and what a manual trade buys. Each account trades its own."
+            >
+              <div className="mt-1">
+                <Dropdown
+                  ariaLabel="Bot underlying"
+                  value={draft.underlying ?? 'BTC'}
+                  onChange={(v) => set('underlying', v)}
+                  options={[{ value: 'BTC', label: 'BTC' },
+                            { value: 'ETH', label: 'ETH' }]}
+                />
+              </div>
+            </Field>
+
             <Field label="Odds" info="How cheap a wing must be. 1:4 means risk 1 to win 4, so the contract must cost at most $0.20. A higher number demands a cheaper contract and takes fewer trades." hint={`max price $${maxPrice.toFixed(4)}`}>
               <Num value={draft.wing_odds} step={0.5} min={0.5} prefix="1:"
                    onChange={(v) => set('wing_odds', v)} />
