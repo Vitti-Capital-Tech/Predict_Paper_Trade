@@ -207,6 +207,13 @@ def build_rounds(tickers: List[Dict[str, Any]], asset: str = "BTC",
         sym = p.get("symbol")
         if not sym:
             continue
+        # `state` is "live" for everything, including a round that has not
+        # opened yet, so it cannot tell a tradeable contract from a listed one.
+        # `trading_status` can: a round spends its first few minutes
+        # post-only and its last moments cancel-only, and a taker order is
+        # refused in both.
+        if p.get("trading_status") not in (None, "operational"):
+            continue
         live.add(sym)
         lt = p.get("launch_time")
         if lt:

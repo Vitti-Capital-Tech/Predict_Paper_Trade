@@ -55,6 +55,18 @@ class DeltaClient:
 
     # ---- market data ----------------------------------------------------
     def live_binary_products(self) -> List[Dict[str, Any]]:
+        """Binary products, with the field that says whether they trade.
+
+        `state` is "live" for every one of these, including a round listed
+        minutes ago that will not accept a taker order yet - which is why
+        filtering on it changed nothing. `trading_status` is the real signal:
+
+          disrupted_post_only    just listed; limit orders only, no taking
+          operational            open for business
+          disrupted_cancel_only  winding down; closing only
+
+        Observed on one round: post_only from launch, operational by 311s.
+        """
         return self._get("/v2/products", {
             "contract_types": BINARY_CONTRACT_TYPES,
             "states": "live",

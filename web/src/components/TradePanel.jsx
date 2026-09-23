@@ -657,13 +657,16 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
                     )}
 
                     <p className="nums mt-1.5 text-center text-[11px] text-slate-500">
-                      You Invest: {money(size.invested)}
+                      You invest: {money(size.invested)}
                     </p>
-                    <p className="nums text-center text-[11px] text-slate-500">
-                      Payout: <span className="text-slate-300">{money(size.payout)}</span>
-                    </p>
-                    <p className="nums text-center text-[11px] text-slate-600">
-                      {size.contracts >= 1 ? `${Math.round(size.contracts)} contracts` : '—'}
+                    {/* Wording and lines match the venue's own ticket. The
+                        contract count is derivable from the two numbers above
+                        and was only adding a third line to read. */}
+                    <p className="nums text-center text-[11px] text-slate-500"
+                       title={size.contracts >= 1
+                         ? `${Math.round(size.contracts)} contracts x $1.00` : ''}>
+                      Payout if correct:{' '}
+                      <span className="text-slate-300">{money(size.payout)}</span>
                     </p>
 
                     {blocked && (
