@@ -114,6 +114,8 @@ function CardHead({ p, status, tone, now }) {
 
 function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
   const invested = Number(p.entry_price) * Number(p.qty)
+  // A binary settles at $1.00 or nothing, so the win is the contract count.
+  const payout = Number(p.qty) * 1.0
   const exitPrice = mark?.ok ? mark.price : null
   const value = exitPrice === null ? null : exitPrice * Number(p.qty)
   const unreal = value === null ? null : value - invested
@@ -131,9 +133,19 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
     <Card>
       <CardHead p={p} status="Open" tone="bg-sky-500/15 text-sky-400" now={now} />
       <div className="mt-3 grid grid-cols-3 gap-3 border-t border-white/5 pt-3">
-        <Field label="Invested Amt." value={money(invested)} />
-        <Field label="Current Value" value={value === null ? '—' : money(value)}
-               align="text-center" />
+        <Field label="Invested Amt." value={money(invested)}
+               title="What the fill actually cost." />
+        {/* Every contract settles at exactly $1.00 or $0.00, so the winning
+            payout is just the size - the one number the card never showed. */}
+        <Field
+          label="Payout if won"
+          value={money(payout)}
+          tone="text-emerald-400"
+          align="text-center"
+          title={`${Number(p.qty).toLocaleString('en-US')} contracts x $1.00 if `
+                 + `${p.side === 'call' ? 'above' : 'below'} `
+                 + `${Number(p.strike).toLocaleString('en-US')} at expiry`}
+        />
         <Field
           label="Unrealized PnL"
           value={unreal === null ? '—' : signed(unreal)}
@@ -142,15 +154,19 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
           align="text-right"
         />
         <Field label="Contracts" value={Number(p.qty).toLocaleString('en-US')} />
-        <Field label="Entry Price" value={Number(p.entry_price).toFixed(4)}
-               align="text-center" />
         <Field
-          label="Slippage Paid"
-          value={Number(p.entry_slippage) > 0
-            ? money(Number(p.entry_slippage) * Number(p.qty)) : '$0.00'}
-          tone={Number(p.entry_slippage) > 0 ? 'text-amber-400' : 'text-slate-400'}
+          label="Entry Price" value={Number(p.entry_price).toFixed(4)}
+          align="text-center"
+          title={Number(p.entry_slippage) > 0
+            ? `Slippage paid: ${money(Number(p.entry_slippage) * Number(p.qty))}`
+              + ` (${Number(p.entry_slippage).toFixed(4)} per contract above the touch)`
+            : 'Filled at the touch price, no slippage.'}
+        />
+        <Field
+          label="Current Value"
+          value={value === null ? '—' : money(value)}
           align="text-right"
-          title="Average fill minus the touch price, times size."
+          title="What the book would pay to close the whole position right now."
         />
       </div>
 
