@@ -159,10 +159,10 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
             : unreal >= 0 ? 'text-emerald-400' : 'text-rose-400'}
           align="text-right"
         />
-        <Field label="Contracts" value={Number(p.qty).toLocaleString('en-US')} />
+        {/* Contracts is Payout divided by a dollar - a fourth number saying
+            what the third already says. */}
         <Field
           label="Entry Price" value={Number(p.entry_price).toFixed(4)}
-          align="text-center"
           title={Number(p.entry_slippage) > 0
             ? `Slippage paid: ${money(Number(p.entry_slippage) * Number(p.qty))}`
               + ` (${Number(p.entry_slippage).toFixed(4)} per contract above the touch)`
@@ -171,7 +171,7 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
         <Field
           label="Current Value"
           value={value === null ? '—' : money(value)}
-          align="text-right"
+          align="text-center"
           title="What the book would pay to close the whole position right now."
         />
       </div>
