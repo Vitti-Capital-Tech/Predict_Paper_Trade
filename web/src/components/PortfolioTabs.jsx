@@ -242,6 +242,10 @@ function TradesTable({ positions }) {
         (a, p) => a + Number(p.exit_price ?? 0) * Number(p.qty), 0)
       const fees = g.legs.reduce((a, p) => a + Number(p.fees ?? 0), 0)
       const code = String(g.roundId).split('-').pop()
+      // Every leg of a round settles against the same underlying price, so
+      // the first one that recorded it speaks for the round.
+      const settledAt = g.legs.find((p) => p.settlement_spot != null)?.settlement_spot
+      const winners = g.legs.filter((p) => Number(p.exit_price) >= 0.5).length
       return {
         ...g,
         expiry: expiryCodeToDate(code),
@@ -249,7 +253,9 @@ function TradesTable({ positions }) {
         invested,
         returned,
         pnl: returned - invested - fees,
-        settled: g.legs.some((p) => p.status === 'settled'),
+        settledAt: settledAt == null ? null : Number(settledAt),
+        winners,
+        closedEarly: g.legs.some((p) => p.status === 'closed'),
       }
     }).sort((a, b) => (b.expiry?.getTime() ?? 0) - (a.expiry?.getTime() ?? 0))
   }, [positions])
@@ -265,16 +271,18 @@ function TradesTable({ positions }) {
 
   return (
     <div className="-mx-4 overflow-x-auto">
-      <table className="w-full min-w-[620px] border-collapse text-sm">
+      <table className="w-full min-w-[820px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-white/10 text-[11px] uppercase tracking-wide
                          text-slate-500">
             <th className="px-4 py-2 text-left font-medium">Expiry</th>
             <th className="px-2 py-2 text-left font-medium">Strikes</th>
+            <th className="px-2 py-2 text-right font-medium">Settled at</th>
             <th className="px-2 py-2 text-right font-medium">Legs</th>
             <th className="px-2 py-2 text-right font-medium">Invested</th>
             <th className="px-2 py-2 text-right font-medium">Returned</th>
-            <th className="px-4 py-2 text-right font-medium">P&amp;L</th>
+            <th className="px-2 py-2 text-right font-medium">P&amp;L</th>
+            <th className="px-4 py-2 text-left font-medium">Outcome</th>
           </tr>
         </thead>
         <tbody>
@@ -296,18 +304,41 @@ function TradesTable({ positions }) {
                   <td className="nums px-2 py-2.5 text-slate-400">
                     {r.strikes.map((v) => v.toLocaleString('en-US')).join(' / ')}
                   </td>
-                  <td className="nums px-2 py-2.5 text-right text-slate-400">
+                  <td className="nums px-2 py-2.5 text-right text-slate-400"
+                      title="Underlying price when the round settled. This is the last
+                             spot the worker saw before expiry, not the venue's published
+                             figure - close to it, but not the same number.">
+                    {r.settledAt == null ? '—' : money(r.settledAt)}
+                  </td>
+                  <td className="nums px-2 py-2.5 text-right text-slate-400"
+                      title={r.legs
+                        .map((l) => `${l.role} ${Number(l.strike).toLocaleString('en-US')}`
+                                    + ` ${l.side}`)
+                        .join(', ')}>
                     {r.legs.length}
                   </td>
-                  <td className="nums px-2 py-2.5 text-right text-slate-300">
+                  <td className="nums px-2 py-2.5 text-right text-slate-300"
+                      title="What the legs cost to open, at the price actually filled.">
                     {money(r.invested)}
                   </td>
-                  <td className="nums px-2 py-2.5 text-right text-slate-300">
+                  <td className="nums px-2 py-2.5 text-right text-slate-300"
+                      title="What came back: every winning contract pays $1.00, losers pay nothing.">
                     {money(r.returned)}
                   </td>
-                  <td className={`nums px-4 py-2.5 text-right font-semibold ${
+                  <td className={`nums px-2 py-2.5 text-right font-semibold ${
                     r.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                     {signed(r.pnl)}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                      r.pnl >= 0 ? 'bg-emerald-500/15 text-emerald-400'
+                        : 'bg-rose-500/15 text-rose-400'}`}>
+                      {r.pnl >= 0 ? 'WON' : 'LOST'}
+                    </span>
+                    <span className="ml-1.5 text-[11px] text-slate-600">
+                      {r.winners}/{r.legs.length} leg{r.legs.length > 1 ? 's' : ''} paid
+                      {r.closedEarly && ' · closed early'}
+                    </span>
                   </td>
                 </tr>
 
@@ -324,6 +355,8 @@ function TradesTable({ positions }) {
                     <td className="nums px-2 py-1.5 text-slate-400">
                       {Number(p.strike).toLocaleString('en-US')}
                     </td>
+                    {/* Settled at is a property of the round, not the leg. */}
+                    <td />
                     <td className="nums px-2 py-1.5 text-right text-slate-500">
                       {Number(p.qty).toLocaleString('en-US')}
                     </td>
@@ -334,16 +367,20 @@ function TradesTable({ positions }) {
                       {p.exit_price === null || p.exit_price === undefined
                         ? '—' : Number(p.exit_price).toFixed(4)}
                     </td>
-                    <td className={`nums px-4 py-1.5 text-right ${
+                    <td className={`nums px-2 py-1.5 text-right ${
                       Number(p.pnl ?? 0) >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
                       {signed(Number(p.pnl ?? 0))}
+                    </td>
+                    <td className="px-4 py-1.5 text-[11px] text-slate-500">
+                      {p.exit_price === null || p.exit_price === undefined ? ''
+                        : Number(p.exit_price) >= 0.5 ? 'paid $1.00' : 'expired'}
                     </td>
                   </tr>
                 ))}
 
                 {expanded && (
                   <tr className="bg-ink-950/40">
-                    <td colSpan={6} className="px-4 pb-2.5 pl-11 text-[11px] text-slate-600">
+                    <td colSpan={8} className="px-4 pb-2.5 pl-11 text-[11px] text-slate-600">
                       {[...new Set(r.legs.map((p) => p.exit_reason).filter(Boolean))]
                         .join(' · ') || '—'}
                     </td>
