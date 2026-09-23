@@ -360,12 +360,24 @@ function TradesTable({ positions }) {
                     <td className="nums px-2 py-1.5 text-right text-slate-500">
                       {Number(p.qty).toLocaleString('en-US')}
                     </td>
-                    <td className="nums px-2 py-1.5 text-right text-slate-500">
-                      {Number(p.entry_price).toFixed(4)}
+                    {/* Money under the money columns. The price is what each
+                        contract cost, not what the leg cost - showing 0.3307
+                        under a heading that says Invested reads as a bug. */}
+                    <td className="nums px-2 py-1.5 text-right text-slate-400">
+                      {money(Number(p.entry_price) * Number(p.qty))}
+                      <span className="ml-1 text-[10px] text-slate-600">
+                        @{Number(p.entry_price).toFixed(4)}
+                      </span>
                     </td>
-                    <td className="nums px-2 py-1.5 text-right text-slate-500">
+                    <td className="nums px-2 py-1.5 text-right text-slate-400">
                       {p.exit_price === null || p.exit_price === undefined
-                        ? '—' : Number(p.exit_price).toFixed(4)}
+                        ? '—'
+                        : (<>
+                            {money(Number(p.exit_price) * Number(p.qty))}
+                            <span className="ml-1 text-[10px] text-slate-600">
+                              @{Number(p.exit_price).toFixed(4)}
+                            </span>
+                          </>)}
                     </td>
                     <td className={`nums px-2 py-1.5 text-right ${
                       Number(p.pnl ?? 0) >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
