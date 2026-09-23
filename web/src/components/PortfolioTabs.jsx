@@ -27,6 +27,12 @@ function whenLabel(iso) {
   return `at ${t}, ${date}`
 }
 
+/** Asset and expiry both live in the round id: ETH-DDMMYYHHMM. */
+function assetOf(roundId) {
+  const head = String(roundId ?? '').split('-')[0]
+  return head || 'BTC'
+}
+
 /** Expiry lives in the round id: BTC-DDMMYYHHMM. */
 function expiryOf(roundId) {
   const code = String(roundId ?? '').split('-').pop()
@@ -86,7 +92,7 @@ function CardHead({ p, status, tone, now }) {
         <SideBadge side={p.side} />
         <div className="min-w-0">
           <p className="nums truncate text-sm font-semibold text-slate-100">
-            BTC above {Number(p.strike).toLocaleString('en-US')}
+            {assetOf(p.round_id)} above {Number(p.strike).toLocaleString('en-US')}
           </p>
           {/* Expiry leads: on an open position the question is how long is
               left, not when it was opened. */}
@@ -318,6 +324,10 @@ function TradesTable({ positions }) {
                     {when(r.expiry)}
                   </td>
                   <td className="nums px-2 py-2.5 text-slate-400">
+                    <span className="mr-1.5 rounded bg-white/5 px-1.5 py-px text-[10px]
+                                     font-semibold text-slate-400">
+                      {assetOf(r.roundId)}
+                    </span>
                     {r.strikes.map((v) => v.toLocaleString('en-US')).join(' / ')}
                   </td>
                   <td className="nums px-2 py-2.5 text-right text-slate-400"
