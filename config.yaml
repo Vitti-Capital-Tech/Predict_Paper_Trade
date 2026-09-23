@@ -40,7 +40,7 @@ timing:
   min_seconds_since_launch: 30.0    # let the book settle after a round lists
   max_seconds_since_launch: 900.0
   min_seconds_to_expiry: 180.0      # no entries in the last 3 minutes
-  max_seconds_to_expiry: 1800.0
+  max_seconds_to_expiry: 900.0
   sessions: []                      # e.g. ["13:00-21:00"] - empty = all hours
   session_timezone: IST             # UTC or IST
   weekdays: [0, 1, 2, 3, 4, 5, 6]   # 0 = Monday

@@ -356,6 +356,10 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
               <Num value={toMin(draft.min_seconds_to_expiry)} unit="min" step={0.5}
                    onChange={(v) => set('min_seconds_to_expiry', toSec(v))} />
             </Field>
+            <Field label="Max to expiry" info="Do not open anything with more than this left. Rounds are 15 minutes, so 15 keeps the bot in the round that is actually running; above that it starts buying the next round before the current one has expired." hint="keeps to the current round">
+              <Num value={toMin(draft.max_seconds_to_expiry)} unit="min" step={0.5}
+                   onChange={(v) => set('max_seconds_to_expiry', toSec(v))} />
+            </Field>
 
             <Field
               label="Max age"

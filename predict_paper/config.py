@@ -55,7 +55,10 @@ class TimingConfig:
     # without it the paper book fills at moments the venue would refuse.
     trading_halt_sec: float = 60.0
     min_seconds_to_expiry: float = 180.0
-    max_seconds_to_expiry: float = 1800.0
+    # Rounds are 15 minutes, so 900 confines entries to the round that is
+    # actually running. The old 1800 spanned two rounds, which let the bot
+    # open the next round before the current one had expired.
+    max_seconds_to_expiry: float = 900.0
     # "HH:MM-HH:MM" windows; empty list = all hours allowed.
     sessions: List[str] = field(default_factory=list)
     session_timezone: str = "UTC"  # "UTC" or "IST"
