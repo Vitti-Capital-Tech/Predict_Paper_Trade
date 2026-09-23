@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   fetchAccountPositions, fetchRecentCloses, placeManualClose,
 } from '../lib/supabase'
-import { fetchOrderbook, walkBook } from '../lib/delta'
+import { fetchOrderbook, walkBook, expiryCodeToDate } from '../lib/delta'
 import { summarise, fmt } from '../lib/stats'
 
 /**
@@ -219,6 +219,147 @@ function Stat({ label, value, sub, tone }) {
       <p className="truncate text-[11px] text-slate-500">{label}</p>
       <p className={`nums mt-0.5 truncate text-base font-semibold ${colour}`}>{value}</p>
       {sub && <p className="nums truncate text-[10px] text-slate-600">{sub}</p>}
+    </div>
+  )
+}
+
+/**
+ * Closed trades grouped by the round they belonged to.
+ *
+ * A strangle is one bet made of two legs, and reading it leg by leg says very
+ * little - one wing losing everything is the normal shape of a winning round.
+ * The round is the unit that means something, so that is the row; the legs are
+ * there when you want them.
+ */
+function TradesTable({ positions }) {
+  const [openRound, setOpenRound] = useState(null)
+
+  const rounds = useMemo(() => {
+    const by = new Map()
+    for (const p of positions) {
+      const g = by.get(p.round_id) ?? { roundId: p.round_id, legs: [] }
+      g.legs.push(p)
+      by.set(p.round_id, g)
+    }
+    return [...by.values()].map((g) => {
+      const invested = g.legs.reduce(
+        (a, p) => a + Number(p.entry_price) * Number(p.qty), 0)
+      const returned = g.legs.reduce(
+        (a, p) => a + Number(p.exit_price ?? 0) * Number(p.qty), 0)
+      const fees = g.legs.reduce((a, p) => a + Number(p.fees ?? 0), 0)
+      const code = String(g.roundId).split('-').pop()
+      return {
+        ...g,
+        expiry: expiryCodeToDate(code),
+        strikes: [...new Set(g.legs.map((p) => Number(p.strike)))].sort((a, b) => a - b),
+        invested,
+        returned,
+        pnl: returned - invested - fees,
+        settled: g.legs.some((p) => p.status === 'settled'),
+      }
+    }).sort((a, b) => (b.expiry?.getTime() ?? 0) - (a.expiry?.getTime() ?? 0))
+  }, [positions])
+
+  if (!rounds.length) {
+    return <p className="py-10 text-center text-sm text-slate-600">No completed trades yet.</p>
+  }
+
+  const when = (d) => (d
+    ? d.toLocaleString('en-US', { day: 'numeric', month: 'short', hour: 'numeric',
+                                  minute: '2-digit', hour12: true })
+    : '—')
+
+  return (
+    <div className="-mx-4 overflow-x-auto">
+      <table className="w-full min-w-[620px] border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-white/10 text-[11px] uppercase tracking-wide
+                         text-slate-500">
+            <th className="px-4 py-2 text-left font-medium">Expiry</th>
+            <th className="px-2 py-2 text-left font-medium">Strikes</th>
+            <th className="px-2 py-2 text-right font-medium">Legs</th>
+            <th className="px-2 py-2 text-right font-medium">Invested</th>
+            <th className="px-2 py-2 text-right font-medium">Returned</th>
+            <th className="px-4 py-2 text-right font-medium">P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rounds.map((r) => {
+            const expanded = openRound === r.roundId
+            return (
+              <Fragment key={r.roundId}>
+                <tr
+                  onClick={() => setOpenRound(expanded ? null : r.roundId)}
+                  className="cursor-pointer border-b border-white/5 transition-colors
+                             hover:bg-white/5"
+                >
+                  <td className="px-4 py-2.5 text-slate-200">
+                    <span className="mr-1.5 inline-block w-2 text-slate-600">
+                      {expanded ? '▾' : '▸'}
+                    </span>
+                    {when(r.expiry)}
+                  </td>
+                  <td className="nums px-2 py-2.5 text-slate-400">
+                    {r.strikes.map((v) => v.toLocaleString('en-US')).join(' / ')}
+                  </td>
+                  <td className="nums px-2 py-2.5 text-right text-slate-400">
+                    {r.legs.length}
+                  </td>
+                  <td className="nums px-2 py-2.5 text-right text-slate-300">
+                    {money(r.invested)}
+                  </td>
+                  <td className="nums px-2 py-2.5 text-right text-slate-300">
+                    {money(r.returned)}
+                  </td>
+                  <td className={`nums px-4 py-2.5 text-right font-semibold ${
+                    r.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {signed(r.pnl)}
+                  </td>
+                </tr>
+
+                {expanded && r.legs.map((p) => (
+                  <tr key={p.id ?? p.position_id} className="bg-ink-950/40 text-[12px]">
+                    <td className="py-1.5 pl-11 pr-2 text-slate-400">
+                      <span className={`mr-1.5 rounded px-1 py-px text-[10px] font-bold
+                                        text-white ${
+                        p.side === 'call' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
+                        {p.side === 'call' ? 'Y' : 'N'}
+                      </span>
+                      {p.role}
+                    </td>
+                    <td className="nums px-2 py-1.5 text-slate-400">
+                      {Number(p.strike).toLocaleString('en-US')}
+                    </td>
+                    <td className="nums px-2 py-1.5 text-right text-slate-500">
+                      {Number(p.qty).toLocaleString('en-US')}
+                    </td>
+                    <td className="nums px-2 py-1.5 text-right text-slate-500">
+                      {Number(p.entry_price).toFixed(4)}
+                    </td>
+                    <td className="nums px-2 py-1.5 text-right text-slate-500">
+                      {p.exit_price === null || p.exit_price === undefined
+                        ? '—' : Number(p.exit_price).toFixed(4)}
+                    </td>
+                    <td className={`nums px-4 py-1.5 text-right ${
+                      Number(p.pnl ?? 0) >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
+                      {signed(Number(p.pnl ?? 0))}
+                    </td>
+                  </tr>
+                ))}
+
+                {expanded && (
+                  <tr className="bg-ink-950/40">
+                    <td colSpan={6} className="px-4 pb-2.5 pl-11 text-[11px] text-slate-600">
+                      {[...new Set(r.legs.map((p) => p.exit_reason).filter(Boolean))]
+                        .join(' · ') || '—'}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -492,18 +633,19 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
           </p>
         )}
 
-        {!error && rows.length === 0 && (
-          <p className="py-10 text-center text-sm text-slate-600">
-            {tab === 'positions'
-              ? 'No open positions.'
-              : 'No completed trades yet.'}
-          </p>
-        )}
-
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-          {rows.map((p) => (
-            tab === 'positions'
-              ? <OpenCard
+        {/* Open positions stay as cards - each one is a live thing you might
+            act on. History is a table grouped by round, because by then the
+            question is how the round did, not what each leg looked like. */}
+        {tab === 'positions' ? (
+          <>
+            {!error && !open.length && (
+              <p className="py-10 text-center text-sm text-slate-600">
+                No open positions.
+              </p>
+            )}
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+              {open.map((p) => (
+                <OpenCard
                   key={p.id ?? p.position_id}
                   p={p}
                   mark={marks[p.symbol]}
@@ -512,9 +654,12 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
                   tolerance={slippage}
                   onClose={requestClose}
                 />
-              : <ClosedCard key={p.id ?? p.position_id} p={p} />
-          ))}
-        </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <TradesTable positions={closed} />
+        )}
       </div>
     </div>
   )
