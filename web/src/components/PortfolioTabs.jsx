@@ -541,25 +541,34 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
   // Candles for the ATR shown in trade history. One request per underlying
   // covering the whole history, rather than one per trade — a few hundred legs
   // would otherwise be a few hundred round-trips.
-  const atrScope = useMemo(() => {
-    const closed = positions.filter((p) => p.status !== 'open')
-    if (!closed.length) return null
-    const assets = [...new Set(closed.map((p) => assetOf(p.round_id)))].filter(Boolean)
-    const stamps = closed
+  // Primitives, not an object. positions is a fresh array every poll, so a
+  // memo returning `{assets, from}` handed the effect a new identity every
+  // 2.5s and it refetched the same candles each time — four requests where
+  // one was due. A string and a number compare by value and settle.
+  const atrAssets = useMemo(() => [...new Set(positions
+    .filter((p) => p.status !== 'open')
+    .map((p) => assetOf(p.round_id))
+    .filter(Boolean))].sort().join(','), [positions])
+
+  const atrFrom = useMemo(() => {
+    const stamps = positions
+      .filter((p) => p.status !== 'open')
       .flatMap((p) => [p.entry_time, p.exit_time])
       .filter(Boolean)
       .map((t) => new Date(t).getTime())
       .filter(Number.isFinite)
-    if (!assets.length || !stamps.length) return null
-    return { assets: assets.join(','), from: Math.min(...stamps) }
+    return stamps.length ? Math.min(...stamps) : null
   }, [positions])
 
+  const { resolution: atrResolution, period: atrPeriod } = atrCfg
+
   useEffect(() => {
-    if (!atrScope) { setAtrByAsset({}); return }
+    if (!atrAssets || atrFrom == null) { setAtrByAsset({}); return }
     let alive = true
-    const { resolution, period } = atrCfg
-    const hours = lookbackHours(atrScope.from, resolution, period)
-    Promise.all(atrScope.assets.split(',').map(async (asset) => {
+    const resolution = atrResolution
+    const period = atrPeriod
+    const hours = lookbackHours(atrFrom, resolution, period)
+    Promise.all(atrAssets.split(',').map(async (asset) => {
       try {
         const rows = await fetchCandles(indexSymbolFor(asset), resolution, hours)
         return [asset, atrSeries(rows, period)]
@@ -568,7 +577,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
       }
     })).then((pairs) => { if (alive) setAtrByAsset(Object.fromEntries(pairs)) })
     return () => { alive = false }
-  }, [atrScope, atrCfg])
+  }, [atrAssets, atrFrom, atrResolution, atrPeriod])
 
   const atrFor = useCallback((asset, tsMs) => {
     if (!Number.isFinite(tsMs)) return null

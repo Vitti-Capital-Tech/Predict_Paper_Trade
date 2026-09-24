@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { fetchStrategyConfig, updateStrategyConfig } from '../lib/supabase'
+import { fetchCandles, indexSymbolFor } from '../lib/delta'
+import { atrSeries, barSeconds } from '../lib/atr'
 import Dropdown from './Dropdown'
 
 /**
@@ -15,6 +17,116 @@ import Dropdown from './Dropdown'
  */
 
 const ATR_RESOLUTIONS = ['1m', '3m', '5m', '15m', '30m', '1h']
+
+/**
+ * What the ATR gate is reading right now, on the settings currently in the
+ * form rather than the saved ones.
+ *
+ * Tuning this blind was the problem: a minimum is only meaningful next to the
+ * number it is being compared against, and switching 15m to 5m moves that
+ * number a long way — 213 against 110 on the same candles at the time of
+ * writing. Reading the draft means changing a field answers "would this gate
+ * be open?" before you commit to it.
+ *
+ * One hook, two views: a chip in the header that is always on screen, and the
+ * fuller block beside the fields. Fetching in each would double the requests
+ * and let them disagree while one was still in flight.
+ */
+function useLiveAtr({ underlying, resolution, period }) {
+  const [candles, setCandles] = useState([])
+  const [state, setState] = useState('loading')
+
+  useEffect(() => {
+    if (!underlying || !resolution) return
+    let alive = true
+    setState((prev) => (prev === 'ok' ? 'ok' : 'loading'))
+    // Enough bars to seed Wilder's smoothing and then some, so the reading is
+    // settled rather than dominated by its own seed.
+    const hours = Math.max(
+      1, Math.ceil(barSeconds(resolution) * (Number(period) * 5 + 20) / 3600))
+    const load = () => fetchCandles(indexSymbolFor(underlying), resolution, hours)
+      .then((rows) => { if (alive) { setCandles(rows); setState('ok') } })
+      .catch(() => { if (alive) setState('error') })
+    load()
+    const t = setInterval(load, 20000)
+    return () => { alive = false; clearInterval(t) }
+  }, [underlying, resolution, period])
+
+  // Changing only the period is a recompute, not another request.
+  return useMemo(() => {
+    const series = atrSeries(candles, Number(period) || 14)
+    return { atr: series.length ? series[series.length - 1].atr : null, state }
+  }, [candles, period, state])
+}
+
+/** Is the gate open on this reading? `minimum` of 0 means there is no gate. */
+function atrVerdict(atr, minimum) {
+  const gated = Number(minimum) > 0
+  return { gated, open: atr != null && (!gated || atr > Number(minimum)) }
+}
+
+/** Header form: always on screen, so it stays to one line. */
+function AtrChip({ atr, state, minimum, resolution }) {
+  const { gated, open } = atrVerdict(atr, minimum)
+  const tone = atr == null ? 'text-slate-500'
+    : open ? 'text-emerald-400' : 'text-amber-400'
+  return (
+    <div
+      className="flex items-center gap-2 rounded-lg border border-white/10 bg-ink-800/60
+                 px-2.5 py-1.5"
+      title={atr == null ? 'ATR unavailable'
+        : !gated ? 'No ATR gate — every round passes this filter'
+        : open ? `ATR ${atr.toFixed(1)} is above the ${Number(minimum).toFixed(0)} minimum`
+        : `ATR ${atr.toFixed(1)} is below the ${Number(minimum).toFixed(0)} minimum`}
+    >
+      <span className="text-[10px] uppercase tracking-wide text-slate-500">ATR</span>
+      <span className={`nums text-sm font-semibold leading-none ${tone}`}>
+        {state === 'error' ? '—' : atr == null ? '···' : atr.toFixed(1)}
+      </span>
+      <span className="nums text-[10px] text-slate-600">{resolution}</span>
+      {atr != null && gated && (
+        <span className={`h-1.5 w-1.5 rounded-full ${
+          open ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+      )}
+    </div>
+  )
+}
+
+/** Expanded form, beside the fields it is judging. */
+function LiveAtr({ atr, state, underlying, resolution, period, minimum }) {
+  const { gated, open } = atrVerdict(atr, minimum)
+  return (
+    <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border
+                    border-white/10 bg-ink-800/60 px-3 py-2">
+      <div className="min-w-0">
+        <p className="text-[11px] text-slate-500">Right now</p>
+        <p className="nums mt-0.5 text-lg font-semibold leading-none text-slate-100">
+          {state === 'error' ? '—'
+            : atr == null ? <span className="text-sm text-slate-500">loading…</span>
+            : atr.toFixed(1)}
+          {atr != null && (
+            <span className="ml-1.5 text-[11px] font-normal text-slate-500">pts</span>
+          )}
+        </p>
+      </div>
+
+      <div className="text-right">
+        <p className="nums text-[11px] text-slate-500">
+          {underlying} · {resolution} · {period} bars
+        </p>
+        <p className={`mt-0.5 text-[11px] font-medium ${
+          atr == null ? 'text-slate-500'
+            : open ? 'text-emerald-400' : 'text-amber-400'}`}>
+          {atr == null ? (state === 'error' ? 'feed unavailable' : ' ')
+            : !gated ? 'no gate — every round passes'
+            : open ? `above ${Number(minimum).toFixed(0)} — gate open`
+            : `below ${Number(minimum).toFixed(0)} — gate closed`}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 // The table stores seconds; the form asks in minutes, which is how anyone
@@ -230,6 +342,15 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
     )
   }
 
+  // Above the early return: hooks must run in the same order on every render,
+  // and `draft` is null until the config loads. Optional access keeps it inert
+  // until there is something to read.
+  const live = useLiveAtr({
+    underlying: draft?.underlying,
+    resolution: draft?.atr_resolution,
+    period: draft?.atr_period,
+  })
+
   if (!draft) {
     return (
       <div className="rounded-xl border border-white/10 bg-ink-900 px-4 py-6
@@ -277,6 +398,12 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Outside the collapsible section on purpose: this is the number
+              that decides whether the bot acts at all, and it was only
+              readable with the filters expanded. */}
+          <AtrChip atr={live.atr} state={live.state}
+                   minimum={draft.atr_min} resolution={draft.atr_resolution} />
+
           <button
             onClick={() => setOpen((v) => !v)}
             className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300
@@ -372,6 +499,14 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
           </Section>
 
           <Section title="ATR gate">
+            <LiveAtr
+              atr={live.atr}
+              state={live.state}
+              underlying={draft.underlying}
+              resolution={draft.atr_resolution}
+              period={draft.atr_period}
+              minimum={draft.atr_min}
+            />
             <Field label="Chart" info="Which candles the ATR is measured on. 15m smooths out noise; 1m reacts faster but fires on moves too small to trade.">
               <div className="mt-1">
                 <Dropdown
