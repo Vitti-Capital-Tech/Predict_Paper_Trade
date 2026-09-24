@@ -371,7 +371,10 @@ So the engine:
   price, and skips the leg if slippage broke the threshold;
 - refetches the book at execution time so real latency is in the fill;
 - rejects rather than silently under-fills when depth is short
-  (`allow_partial: false`);
+  (`allow_partial: false`), unless `entry.partial_entry` is on, in which
+  case a leg is bought in the largest size that clears the odds ceiling,
+  the slippage cap and its remaining dollar budget, and is topped up on
+  later ticks of the same round until it reaches `investment_per_leg`;
 - skips legs whose spread exceeds `max_spread_frac` of mid;
 - tracks slippage cost separately, shown on the dashboard.
 

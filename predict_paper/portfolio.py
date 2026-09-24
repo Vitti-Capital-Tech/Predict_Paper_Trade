@@ -246,6 +246,51 @@ class Portfolio:
                  fill.top_price or 0.0, fill.slippage_vs_top)
         return pos
 
+    def add_to_position(self, pos: Position, fill,
+                        atr: Optional[float] = None) -> Position:
+        """Fold a top-up fill into a leg already held.
+
+        A leg bought in three goes is still one leg, so this averages rather
+        than opening a second row: two rows for the same contract would read
+        as two legs everywhere that counts them, and would claim the round
+        was wider than it was.
+
+        Entry price is weighted by size, which is what "combine the small
+        payments" means arithmetically - the average of what was paid. Entry
+        time and the entry ATR stay as they were: they mark when the position
+        was established, and the later fills are the same decision finishing.
+        """
+        fee = fill.qty * fill.avg_price * self.cfg.taker_fee_rate
+        old_qty, total = pos.qty, pos.qty + fill.qty
+        if total <= 0:
+            return pos
+
+        pos.entry_price = (pos.entry_price * old_qty
+                           + fill.avg_price * fill.qty) / total
+        pos.entry_slippage = (pos.entry_slippage * old_qty
+                              + fill.slippage_vs_top * fill.qty) / total
+        pos.entry_levels = max(pos.entry_levels, fill.levels_consumed)
+        pos.qty = total
+        pos.fees += fee
+
+        spend = fill.qty * fill.avg_price + fee
+        self.cash -= spend
+        if pos.account_id:
+            try:
+                self.store.adjust_account_balance(pos.account_id, -spend)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("account debit failed: %s", exc)
+
+        self._sync(pos)
+        self.log_event("topup", position_id=pos.position_id, symbol=pos.symbol,
+                       role=pos.role, qty=fill.qty, price=fill.avg_price,
+                       top_price=fill.top_price, slippage=fill.slippage_vs_top,
+                       cash=self.cash)
+        log.info("TOPUP  %-28s %-9s +%-5.0f @ %.4f -> qty=%-5.0f @ %.4f",
+                 pos.symbol, pos.role, fill.qty, fill.avg_price,
+                 pos.qty, pos.entry_price)
+        return pos
+
     def close_position(self, pos: Position, fill, now: datetime,
                        reason: str) -> None:
         fee = fill.qty * fill.avg_price * self.cfg.taker_fee_rate

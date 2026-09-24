@@ -669,6 +669,30 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
                 <span>$0.10</span>
               </div>
             </div>
+            {/* Depth is not what blocks entries today: of 8,000 skips, none
+                were short of contracts. What blocks them is the price of
+                buying the whole leg at once, which is a thing size can fix.
+
+                Hidden until migration 015 has been run. Shown before then it
+                would toggle, mark the form dirty, and then be stripped from
+                the patch on save - a switch that flips back and says nothing
+                about why. */}
+            {saved && 'partial_entry' in saved && (
+            <Field
+              label="Part fills"
+              info="Off, a leg is bought at full size or not at all — if $50 cannot be bought within your slippage tolerance, the round is skipped. On, it buys the largest part that fits and adds to it on later ticks until the leg reaches $50 or the round closes. The two wings can then end up different sizes."
+              hint={draft.partial_entry
+                ? 'builds the leg out of smaller fills'
+                : 'all of the leg, or none of it'}
+            >
+              <Toggle
+                on={Boolean(draft.partial_entry)}
+                onChange={(v) => set('partial_entry', v)}
+                label={draft.partial_entry ? 'Take what fits' : 'All or nothing'}
+              />
+            </Field>
+            )}
+
             <Field
               label="Investment per leg"
              

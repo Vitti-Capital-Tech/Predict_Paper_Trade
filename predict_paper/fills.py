@@ -79,6 +79,84 @@ def walk_book(book: Dict[str, Any], side: str, qty: float, max_levels: int = 20,
     return Fill(True, got, avg, "ok", consumed, top, slip, qty)
 
 
+def qty_within_price(book: Dict[str, Any], side: str, qty: float,
+                     ceiling: float, max_levels: int = 20) -> float:
+    """The largest slice of `qty` whose average fill stays within `ceiling`.
+
+    Buying more of a thin leg always costs more per contract, because each
+    extra contract comes off a worse level - so the affordable sizes are a
+    prefix of the requested one and one walk finds the edge of it. Returns
+    0.0 when even the touch is already beyond the ceiling.
+
+    For a buy, `ceiling` is a maximum average price; for a sell it is a
+    minimum. Both are "no worse than this".
+    """
+    if qty <= 0:
+        return 0.0
+    key = "sell" if side == "buy" else "buy"
+    levels = _levels(book, key, max_levels)
+    if not levels:
+        return 0.0
+    levels.sort(key=lambda x: x[0], reverse=(side == "sell"))
+
+    taken = cost = 0.0
+    for price, size in levels:
+        room = min(qty - taken, size)
+        if room <= 0:
+            break
+        # How far the average may still be dragged, and how hard this level
+        # drags it. A level on the right side of the ceiling is free to take
+        # whole; one past it can still be taken while the cheaper fills below
+        # carry it, and only stops the walk when that budget runs out. A level
+        # priced past the ceiling is NOT the end of the walk on its own: if
+        # its own size ran out first there is budget left for the next one.
+        slack = (ceiling * taken - cost) if side == "buy" else (cost - ceiling * taken)
+        worse = (price - ceiling) if side == "buy" else (ceiling - price)
+        if worse > 0:
+            allowed = slack / worse
+            if allowed <= 0:
+                break
+            if allowed < room:
+                taken += allowed
+                cost += allowed * price
+                break
+        taken += room
+        cost += room * price
+    return max(0.0, taken)
+
+
+def qty_within_spend(book: Dict[str, Any], side: str, qty: float,
+                     budget: float, max_levels: int = 20) -> float:
+    """The largest slice of `qty` that costs no more than `budget` to buy.
+
+    A dollar budget is converted to contracts at the quoted price, but the
+    fill walks past that price, so the money actually leaving the account is
+    larger - by as much as the odds ceiling allows, which on a leg quoted at
+    0.05 against a ceiling of 0.1667 is more than three times the budget.
+    A leg being assembled out of small fills has to respect the total it is
+    being assembled to, so the walk stops when the money runs out.
+    """
+    if qty <= 0 or budget <= 0:
+        return 0.0
+    key = "sell" if side == "buy" else "buy"
+    levels = _levels(book, key, max_levels)
+    if not levels:
+        return 0.0
+    levels.sort(key=lambda x: x[0])
+
+    taken = cost = 0.0
+    for price, size in levels:
+        room = min(qty - taken, size)
+        if room <= 0 or price <= 0:
+            break
+        if cost + room * price > budget:
+            taken += (budget - cost) / price
+            break
+        taken += room
+        cost += room * price
+    return max(0.0, taken)
+
+
 class FillEngine:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -102,6 +180,38 @@ class FillEngine:
         if frac > limit:
             return False, f"spread {frac:.1%} of mid exceeds limit {limit:.0%}"
         return True, ""
+
+    def trim_to_budget(self, side: str, qty: float,
+                       book: Optional[Dict[str, Any]],
+                       ceiling: Optional[float],
+                       budget: Optional[float] = None) -> float:
+        """Shrink `qty` until it fills inside the limits, rather than refusing it.
+
+        Two limits, and the smaller one wins: the price the fill may average
+        (`ceiling`) and the money it may cost (`budget`). Both hold on a
+        prefix of the order - each further contract comes off a worse level,
+        so it can only raise the average and the total - which is why one
+        walk each finds them.
+
+        Only the order-book model has anything to shrink: under best_quote and
+        mark the price does not depend on size, so a leg that is too expensive
+        is too expensive at any size.
+
+        The padding `_apply_extra` adds after the walk is part of what gets
+        paid, so it comes out of the ceiling first - otherwise the trimmed
+        size lands just past the limit it was trimmed to meet.
+        """
+        if not book or self.cfg.model != "orderbook":
+            return qty
+        if ceiling is not None:
+            pad = self.cfg.extra_slippage_ticks * self.cfg.tick_size
+            limit = (ceiling - pad) if side == "buy" else (ceiling + pad)
+            qty = min(qty, qty_within_price(book, side, qty, limit,
+                                            self.cfg.max_book_levels))
+        if budget is not None and side == "buy":
+            qty = min(qty, qty_within_spend(book, side, qty, budget,
+                                            self.cfg.max_book_levels))
+        return max(0.0, qty)
 
     def simulate(self, side: str, qty: float, book: Optional[Dict[str, Any]],
                  best_bid: Optional[float], best_ask: Optional[float],

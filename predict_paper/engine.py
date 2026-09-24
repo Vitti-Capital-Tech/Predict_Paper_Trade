@@ -95,6 +95,11 @@ class AccountStrategy:
 
 WINGS = ("wing_low", "wing_high")
 
+# With partial entry on, stop topping a leg up once it is this close to its
+# target. The last few dollars buy a handful of contracts and cost a crossed
+# spread to get, so chasing them writes a fill every tick for no real exposure.
+TOPUP_FLOOR_FRAC = 0.10
+
 
 def drop_orphan_middle(planned_roles, held_roles, needs_both):
     """Should the middle leg be dropped for want of its wings?
@@ -255,6 +260,13 @@ class Engine:
         c.entry.investment_per_leg = self._num(
             row, "investment_per_leg", c.entry.investment_per_leg)
         c.entry.max_slippage = self._num(row, "max_slippage", c.entry.max_slippage)
+        # One toggle, two places: the entry rule decides whether to size a leg
+        # down and top it up later, and the fill model decides whether a book
+        # too thin for the whole order fills what it has. Set apart they would
+        # disagree, and a leg would be trimmed for price but refused for depth.
+        c.entry.partial_entry = bool(
+            row.get("partial_entry", c.entry.partial_entry))
+        c.fills.allow_partial = c.entry.partial_entry
         # The one-sided-market guard. Per account so it can be measured:
         # it is the largest single brake on entries, and a skipped entry
         # leaves no outcome to judge it by.
@@ -407,6 +419,14 @@ class Engine:
                 continue
             self.portfolio.close_position(pos, fill, now, reason)
 
+    def _open_leg(self, aid: Optional[int], round_id: str, symbol: str):
+        """This account's open position on a contract, if it already holds one."""
+        for p in self.portfolio.open_positions:
+            if (p.account_id == aid and p.symbol == symbol
+                    and p.round_id == round_id):
+                return p
+        return None
+
     # ---- entries --------------------------------------------------------
     def try_enter(self, acct: "AccountStrategy", rnd: Round, now: datetime,
                   atr_ok: bool, atr: Optional[float]) -> None:
@@ -435,9 +455,30 @@ class Engine:
                                          spot=decision.spot)
             return
 
+        partial = cfg.entry.partial_entry
+        target = cfg.entry.investment_per_leg
+
+        def short_by(symbol: str) -> float:
+            """Dollars still to put on this leg to reach the target."""
+            pos = self._open_leg(aid, rnd.round_id, symbol)
+            return target - (pos.qty * pos.entry_price if pos else 0.0)
+
+        def wants_more(symbol: str) -> bool:
+            """Is this leg worth another go on this tick?
+
+            Only with partial entry on, and only for a gap big enough to be
+            worth crossing a spread for. Without the floor a leg that landed
+            at 99% of target would try again every two seconds for the rest
+            of the round.
+            """
+            return partial and short_by(symbol) >= TOPUP_FLOOR_FRAC * target
+
+        # A leg already held is normally finished with. Under partial entry a
+        # short fill is not finished with - it is owed the rest.
         legs = [l for l in decision.legs if l.ok
-                and (aid, l.contract.symbol) not in self._held_symbols
-                and l.role not in held]
+                and (((aid, l.contract.symbol) not in self._held_symbols
+                      and l.role not in held)
+                     or wants_more(l.contract.symbol))]
         if not legs:
             return
 
@@ -447,11 +488,15 @@ class Engine:
             Converted at the leg's own price rather than once for the round:
             the two wings are rarely priced alike, so a single count would put
             very different money on each. Same arithmetic the ticket uses.
+
+            On a top-up the budget is only what the leg is still short, so the
+            small fills add up to the target rather than to a multiple of it.
             """
             price = leg.quoted_price
             if not price or price <= 0:
                 return 0
-            return int(round(cfg.entry.investment_per_leg / price))
+            budget = short_by(leg.contract.symbol) if partial else target
+            return int(round(budget / price))
 
         # Price every leg first; with require_both_wings, a round is all-or-nothing,
         # so a leg that cannot fill must not leave the other one on naked.
@@ -474,6 +519,31 @@ class Engine:
                 continue
 
             book = self._book(leg.contract.symbol)
+            if partial:
+                # Rather than refuse a leg whose full size walks past the
+                # limits, buy the part of it that does not. Whichever of the
+                # odds ceiling and the slippage cap binds first is the price
+                # the size has to fit under; the checks below still stand as
+                # the guarantee, this only stops them firing needlessly.
+                ceiling = leg.max_price
+                if cfg.entry.max_slippage is not None and leg.quoted_price is not None:
+                    ceiling = min(ceiling,
+                                  leg.quoted_price + cfg.entry.max_slippage)
+                qty = int(acct.fills.trim_to_budget(
+                    "buy", qty, book, ceiling, short_by(leg.contract.symbol)))
+                if qty < 1:
+                    msg = "nothing fills within %.4f" % ceiling
+                    key = (rnd.round_id, leg.role, msg)
+                    if key not in self._logged_rejects:
+                        self._logged_rejects.add(key)
+                        log.info("SKIP   %-18s %s: %s",
+                                 rnd.round_id, leg.role, msg)
+                        self.portfolio.log_event(
+                            "skip", round_id=rnd.round_id,
+                            reasons=["%s %s" % (leg.role, msg)])
+                    if cfg.entry.require_both_wings:
+                        return
+                    continue
             fill = acct.fills.simulate("buy", qty, book, leg.contract.best_bid,
                                        leg.contract.best_ask, leg.contract.mark_price)
             if not fill.filled:
@@ -538,10 +608,16 @@ class Engine:
             # balance and shows up in its portfolio. Bot entries used to carry
             # no account at all, which left them invisible in a panel that
             # filters by one.
-            self.portfolio.open_position(
-                rnd.round_id, leg.contract.symbol, leg.role, leg.contract.side,
-                leg.contract.strike, fill, now, decision.spot, atr,
-                account_id=aid)
+            existing = self._open_leg(aid, rnd.round_id, leg.contract.symbol)
+            if existing is not None:
+                # A leg bought over several ticks is one position at the
+                # average of what was paid, not one position per fill.
+                self.portfolio.add_to_position(existing, fill)
+            else:
+                self.portfolio.open_position(
+                    rnd.round_id, leg.contract.symbol, leg.role,
+                    leg.contract.side, leg.contract.strike, fill, now,
+                    decision.spot, atr, account_id=aid)
             self._held_symbols.add((aid, leg.contract.symbol))
             self._held_roles.setdefault((aid, rnd.round_id), set()).add(leg.role)
 

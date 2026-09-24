@@ -170,6 +170,7 @@ default and the optimistic ones opt-in:
 | **Re-test the odds rule against the price actually paid**, not the touch | `engine.try_enter` |
 | Refetch the book at execution time so real latency is in the fill | `fills.refetch_book_on_execute` |
 | Reject rather than silently under-fill when depth is short | `allow_partial: false` |
+| Optionally build a leg out of smaller fills instead | `entry.partial_entry` |
 | Skip legs whose spread exceeds a fraction of mid | `fills.max_spread_frac` |
 | Track slippage cost as a first-class metric | `Position.entry_slippage` |
 

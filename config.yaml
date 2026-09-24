@@ -63,6 +63,10 @@ entry:
   investment_per_leg: 25.0   # dollars per leg; contracts follow from the price
   one_entry_per_round: true
 
+  # false = a leg fills at full size or not at all
+  # true  = fill what the book allows, top the rest up on later ticks
+  partial_entry: false
+
 # "exit rule ITM 50"
 exit:
   # AMBIGUOUS - what "ITM 50" means:

@@ -331,6 +331,21 @@ artifact**, not for production runs.
 
 `slippage_vs_top × qty` is summed into the dashboard's **Slippage cost** KPI.
 
+### `trim_to_budget(side, qty, book, ceiling, budget)`
+
+Used only when `entry.partial_entry` is on. Returns the largest slice of `qty`
+that fills inside two limits at once - the average price it may pay (the odds
+ceiling, or the slippage cap, whichever binds first) and the money it may spend
+(what the leg is still short of `investment_per_leg`).
+
+Both limits hold on a prefix of the order, because every further contract comes
+off a worse level and so can only raise the average and the total. One walk each
+finds them, and the smaller wins.
+
+The budget limit is not decoration. A leg quoted at `0.05` against an odds
+ceiling of `0.1667` can be filled at more than three times its dollar budget on
+price alone, which is not what "make it up to $50" means.
+
 ### `spread_ok(bid, ask)`
 
 Rejects a leg when `(ask − bid) / mid > max_spread_frac` (default `1.5`). Guards
@@ -846,7 +861,7 @@ can be reviewed before a project exists.
 | `model` | `orderbook` | `best_quote` / `mark` are diagnostic only |
 | `extra_slippage_ticks` | `0.0` | Adverse padding beyond visible depth |
 | `max_book_levels` | `20` | |
-| `allow_partial` | `false` | Reject rather than under-fill |
+| `allow_partial` | `false` | Reject rather than under-fill; follows `entry.partial_entry` |
 | `refetch_book_on_execute` | `true` | Puts real latency in the fill |
 | `max_spread_frac` | `1.5` | Skip if spread > 150% of mid |
 </details>

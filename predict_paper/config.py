@@ -105,6 +105,16 @@ class EntryConfig:
     investment_per_leg: float = 25.0
     one_entry_per_round: bool = True
 
+    # Buy what the book will sell you, instead of all-or-nothing.
+    #
+    # Off, a leg that cannot be bought in full at an acceptable price is
+    # dropped. On, it is bought in the largest size that is acceptable, and
+    # the shortfall is topped up on later ticks of the same round until the
+    # leg reaches `investment_per_leg` or the entry window closes. The two
+    # wings can then end up different sizes, which a strangle does not
+    # assume - the cheaper side simply pays more if it wins.
+    partial_entry: bool = False
+
 
 @dataclass
 class ExitConfig:
