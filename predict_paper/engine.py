@@ -70,6 +70,10 @@ class AccountStrategy:
         self.name = str(account_id)
         self.balance = 0.0
         self.strategy = Strategy(cfg)
+        # Its own fill engine, holding a reference to this account's cfg.fills,
+        # so a spread guard edited in the dashboard reaches the entry path.
+        # Sharing the engine-level one silently ignored the per-account value.
+        self.fills = FillEngine(cfg.fills)
         self.atr_gate = AtrGate(
             client, cfg.atr.candle_symbol, cfg.atr.resolution, cfg.atr.period,
             cfg.atr.min_atr, cfg.atr.refresh_sec, cfg.atr.enabled)
@@ -251,6 +255,11 @@ class Engine:
         c.entry.investment_per_leg = self._num(
             row, "investment_per_leg", c.entry.investment_per_leg)
         c.entry.max_slippage = self._num(row, "max_slippage", c.entry.max_slippage)
+        # The one-sided-market guard. Per account so it can be measured:
+        # it is the largest single brake on entries, and a skipped entry
+        # leaves no outcome to judge it by.
+        c.fills.max_spread_frac = self._num(
+            row, "max_spread_frac", c.fills.max_spread_frac)
 
         c.exit.mode = row.get("exit_mode") or c.exit.mode
         c.exit.moneyness_trigger = row.get("exit_trigger") or c.exit.moneyness_trigger
@@ -448,7 +457,7 @@ class Engine:
         # so a leg that cannot fill must not leave the other one on naked.
         planned = []
         for leg in legs:
-            ok, why = self.fills.spread_ok(leg.contract.best_bid, leg.contract.best_ask)
+            ok, why = acct.fills.spread_ok(leg.contract.best_bid, leg.contract.best_ask)
             if not ok:
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, why)
                 self.portfolio.log_event("skip", round_id=rnd.round_id,
@@ -465,7 +474,7 @@ class Engine:
                 continue
 
             book = self._book(leg.contract.symbol)
-            fill = self.fills.simulate("buy", qty, book, leg.contract.best_bid,
+            fill = acct.fills.simulate("buy", qty, book, leg.contract.best_bid,
                                        leg.contract.best_ask, leg.contract.mark_price)
             if not fill.filled:
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, fill.reason)

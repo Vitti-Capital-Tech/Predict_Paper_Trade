@@ -632,6 +632,24 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
           </Section>
 
           <Section title="Execution and size">
+            {/* The single largest brake on entries: it accounted for 4,055 of
+                12,000 skips, against 49 for the slippage cap. It fires on
+                contracts nobody is bidding for, which is the shape of a cheap
+                wing - so it blocks the legs the strategy is built to buy.
+                Whether that helps or hurts is not in the logs, because a
+                skipped entry has no outcome. Exposed so it can be measured. */}
+            <Field
+              label="One-sided market"
+              info="Skip a leg when the gap between the best buy and best sell price is wider than this, measured against the mid. A cheap wing often has a seller but no real buyer, and this is what refuses it. 2.0 turns the rule off entirely."
+              hint={Number(draft.max_spread_frac) >= 2
+                ? 'off — takes any spread'
+                : 'skips one-sided books'}
+            >
+              <Num value={draft.max_spread_frac} min={0.5} max={2} step={0.1}
+                   unit="x mid"
+                   onChange={(v) => set('max_spread_frac', v)} />
+            </Field>
+
             <div className="col-span-2">
               <div className="flex items-baseline justify-between">
                 <span className="text-[11px] text-slate-500">Slippage tolerance</span>
