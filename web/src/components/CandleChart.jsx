@@ -296,17 +296,12 @@ export default function CandleChart({
         ) : null
       ))}
 
-      {/* Target line + pill */}
+      {/* The rule sits behind the series; its label does not — see below. */}
       {strikeY !== null && (
         <g>
           <line x1={0} x2={plotW} y1={strikeY} y2={strikeY}
                 stroke={COLORS.targetRule} strokeWidth="1" strokeDasharray="1 4"
                 strokeLinecap="round" opacity="0.9" />
-          <rect x={4} y={strikeY - 9} width={52} height={18} rx={3} fill={COLORS.target} />
-          <text x={30} y={strikeY + 4} fill="#fff" fontSize="10.5" fontWeight="600"
-                textAnchor="middle">
-            Target
-          </text>
         </g>
       )}
 
@@ -341,6 +336,20 @@ export default function CandleChart({
         <path d={linePath} fill="none" stroke={COLORS.line} strokeWidth="1.6"
               strokeLinejoin="round" strokeLinecap="round"
               vectorEffect="non-scaling-stroke" />
+      )}
+
+      {/* The Target label, drawn after the series so candles cannot bury it.
+          It marks the level the contract resolves against, so it has to stay
+          legible wherever price happens to be sitting. */}
+      {strikeY !== null && (
+        <g>
+          <rect x={4} y={strikeY - 9} width={52} height={18} rx={3}
+                fill={COLORS.target} />
+          <text x={30} y={strikeY + 4} fill="#fff" fontSize="10.5" fontWeight="600"
+                textAnchor="middle">
+            Target
+          </text>
+        </g>
       )}
 
       {/* Right-axis tags.
