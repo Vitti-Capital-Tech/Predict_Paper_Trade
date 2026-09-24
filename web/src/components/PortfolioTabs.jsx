@@ -1,8 +1,12 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   fetchAccountPositions, fetchRecentCloses, placeManualClose,
+  fetchStrategyConfig,
 } from '../lib/supabase'
-import { fetchOrderbook, walkBook, expiryCodeToDate } from '../lib/delta'
+import {
+  fetchOrderbook, walkBook, expiryCodeToDate, fetchCandles, indexSymbolFor,
+} from '../lib/delta'
+import { atrSeries, atrAt, lookbackHours } from '../lib/atr'
 import { summarise, fmt } from '../lib/stats'
 
 /**
@@ -16,6 +20,14 @@ const money = (v, d = 2) =>
   `$${Number(v ?? 0).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d })}`
 
 const signed = (v) => `${Number(v) >= 0 ? '+' : '-'}$${Math.abs(Number(v ?? 0)).toFixed(2)}`
+
+/** Clock time for a trade stamp; the date is already on the round's row. */
+const clockOf = (iso) => (iso
+  ? new Date(iso).toLocaleTimeString('en-US', {
+      hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })
+  : '—')
+
+const atrText = (v) => (v == null ? 'ATR —' : `ATR ${v.toFixed(1)}`)
 
 /** Asset and expiry both live in the round id: ETH-DDMMYYHHMM. */
 function assetOf(roundId) {
@@ -243,7 +255,7 @@ function Stat({ label, value, sub, tone }) {
  * The round is the unit that means something, so that is the row; the legs are
  * there when you want them.
  */
-function TradesTable({ positions }) {
+function TradesTable({ positions, atrFor, atrLabel }) {
   const [openRound, setOpenRound] = useState(null)
 
   const rounds = useMemo(() => {
@@ -264,8 +276,21 @@ function TradesTable({ positions }) {
       // the first one that recorded it speaks for the round.
       const settledAt = g.legs.find((p) => p.settlement_spot != null)?.settlement_spot
       const winners = g.legs.filter((p) => Number(p.exit_price) >= 0.5).length
+      // The round opened when its first leg filled and finished when its last
+      // one did, so the row spans the legs rather than picking one of them.
+      const entryTimes = g.legs.map((p) => p.entry_time).filter(Boolean)
+        .map((t) => new Date(t).getTime())
+      const exitTimes = g.legs.map((p) => p.exit_time).filter(Boolean)
+        .map((t) => new Date(t).getTime())
+      const openedAt = entryTimes.length ? Math.min(...entryTimes) : null
+      const closedAt = exitTimes.length ? Math.max(...exitTimes) : null
+      const asset = assetOf(g.roundId)
       return {
         ...g,
+        openedAt,
+        closedAt,
+        entryAtr: atrFor(asset, openedAt),
+        exitAtr: atrFor(asset, closedAt),
         expiry: expiryCodeToDate(code),
         strikes: [...new Set(g.legs.map((p) => Number(p.strike)))].sort((a, b) => a - b),
         invested,
@@ -276,7 +301,7 @@ function TradesTable({ positions }) {
         closedEarly: g.legs.some((p) => p.status === 'closed'),
       }
     }).sort((a, b) => (b.expiry?.getTime() ?? 0) - (a.expiry?.getTime() ?? 0))
-  }, [positions])
+  }, [positions, atrFor])
 
   if (!rounds.length) {
     return <p className="py-10 text-center text-sm text-slate-600">No completed trades yet.</p>
@@ -289,12 +314,14 @@ function TradesTable({ positions }) {
 
   return (
     <div className="-mx-4 overflow-x-auto">
-      <table className="w-full min-w-[820px] border-collapse text-sm">
+      <table className="w-full min-w-[1040px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-white/10 text-[11px] uppercase tracking-wide
                          text-slate-500">
             <th className="px-4 py-2 text-left font-medium">Expiry</th>
             <th className="px-2 py-2 text-left font-medium">Strikes</th>
+            <th className="px-2 py-2 text-left font-medium" title={atrLabel}>Entry</th>
+            <th className="px-2 py-2 text-left font-medium" title={atrLabel}>Exit</th>
             <th className="px-2 py-2 text-right font-medium">Settled at</th>
             <th className="px-2 py-2 text-right font-medium">Legs</th>
             <th className="px-2 py-2 text-right font-medium">Invested</th>
@@ -325,6 +352,16 @@ function TradesTable({ positions }) {
                       {assetOf(r.roundId)}
                     </span>
                     {r.strikes.map((v) => v.toLocaleString('en-US')).join(' / ')}
+                  </td>
+                  <td className="nums px-2 py-2.5 text-slate-400">
+                    <div className="text-slate-300">{clockOf(
+                      r.openedAt ? new Date(r.openedAt).toISOString() : null)}</div>
+                    <div className="text-[10px] text-slate-600">{atrText(r.entryAtr)}</div>
+                  </td>
+                  <td className="nums px-2 py-2.5 text-slate-400">
+                    <div className="text-slate-300">{clockOf(
+                      r.closedAt ? new Date(r.closedAt).toISOString() : null)}</div>
+                    <div className="text-[10px] text-slate-600">{atrText(r.exitAtr)}</div>
                   </td>
                   <td className="nums px-2 py-2.5 text-right text-slate-400"
                       title="Underlying price when the round settled. This is the last
@@ -377,6 +414,20 @@ function TradesTable({ positions }) {
                     <td className="nums px-2 py-1.5 text-slate-400">
                       {Number(p.strike).toLocaleString('en-US')}
                     </td>
+                    <td className="nums px-2 py-1.5 text-slate-500">
+                      <div>{clockOf(p.entry_time)}</div>
+                      <div className="text-[10px] text-slate-600">
+                        {atrText(atrFor(assetOf(r.roundId), p.entry_time
+                          ? new Date(p.entry_time).getTime() : null))}
+                      </div>
+                    </td>
+                    <td className="nums px-2 py-1.5 text-slate-500">
+                      <div>{clockOf(p.exit_time)}</div>
+                      <div className="text-[10px] text-slate-600">
+                        {atrText(atrFor(assetOf(r.roundId), p.exit_time
+                          ? new Date(p.exit_time).getTime() : null))}
+                      </div>
+                    </td>
                     {/* Settled at is a property of the round, not the leg. */}
                     <td />
                     {/* Legs counts legs on the round row; a contract count
@@ -406,7 +457,7 @@ function TradesTable({ positions }) {
 
                 {expanded && (
                   <tr className="bg-ink-950/40">
-                    <td colSpan={8} className="px-4 pb-2.5 pl-11 text-[11px] text-slate-600">
+                    <td colSpan={10} className="px-4 pb-2.5 pl-11 text-[11px] text-slate-600">
                       {[...new Set(r.legs.map((p) => p.exit_reason).filter(Boolean))]
                         .join(' · ') || '—'}
                     </td>
@@ -435,6 +486,11 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
   // rejection. Keyed by position_id.
   const [closes, setCloses] = useState({})
   const [closesOffline, setClosesOffline] = useState(false)
+  // ATR settings come from the account's filters, so history is read through
+  // whatever rule is currently in force rather than a value frozen at entry.
+  const [atrCfg, setAtrCfg] = useState({ resolution: '15m', period: 14 })
+  // One running ATR series per underlying, keyed by asset.
+  const [atrByAsset, setAtrByAsset] = useState({})
   // Bridges the gap between the click and the row appearing in the next poll.
   const [busy, setBusy] = useState({})
   // Ticks the expiry countdowns. The data polls are far slower than a second
@@ -444,6 +500,21 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  useEffect(() => {
+    if (!accountId) return
+    let alive = true
+    fetchStrategyConfig(accountId)
+      .then((cfg) => {
+        if (!alive || !cfg) return
+        setAtrCfg({
+          resolution: cfg.atr_resolution ?? '15m',
+          period: Number(cfg.atr_period ?? 14),
+        })
+      })
+      .catch(() => { /* fall back to the defaults above */ })
+    return () => { alive = false }
+  }, [accountId, refreshKey])
 
   const load = useCallback(() => {
     if (!accountId) { setPositions([]); return }
@@ -466,6 +537,46 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
 
   // A fill just landed; don't make the user wait for the next tick.
   useEffect(() => { if (refreshKey) load() }, [refreshKey, load])
+
+  // Candles for the ATR shown in trade history. One request per underlying
+  // covering the whole history, rather than one per trade — a few hundred legs
+  // would otherwise be a few hundred round-trips.
+  const atrScope = useMemo(() => {
+    const closed = positions.filter((p) => p.status !== 'open')
+    if (!closed.length) return null
+    const assets = [...new Set(closed.map((p) => assetOf(p.round_id)))].filter(Boolean)
+    const stamps = closed
+      .flatMap((p) => [p.entry_time, p.exit_time])
+      .filter(Boolean)
+      .map((t) => new Date(t).getTime())
+      .filter(Number.isFinite)
+    if (!assets.length || !stamps.length) return null
+    return { assets: assets.join(','), from: Math.min(...stamps) }
+  }, [positions])
+
+  useEffect(() => {
+    if (!atrScope) { setAtrByAsset({}); return }
+    let alive = true
+    const { resolution, period } = atrCfg
+    const hours = lookbackHours(atrScope.from, resolution, period)
+    Promise.all(atrScope.assets.split(',').map(async (asset) => {
+      try {
+        const rows = await fetchCandles(indexSymbolFor(asset), resolution, hours)
+        return [asset, atrSeries(rows, period)]
+      } catch {
+        return [asset, []]
+      }
+    })).then((pairs) => { if (alive) setAtrByAsset(Object.fromEntries(pairs)) })
+    return () => { alive = false }
+  }, [atrScope, atrCfg])
+
+  const atrFor = useCallback((asset, tsMs) => {
+    if (!Number.isFinite(tsMs)) return null
+    return atrAt(atrByAsset[asset], Math.floor(tsMs / 1000))
+  }, [atrByAsset])
+
+  const atrLabel = `Wilder ATR(${atrCfg.period}) on ${atrCfg.resolution} candles,`
+    + ' taken from the filters this account is running now'
 
   // What each open position is actually worth, walked through the book for
   // its own size. The ticker's best_bid is both stale and top-of-book only, so
@@ -723,7 +834,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
             </div>
           </>
         ) : (
-          <TradesTable positions={closed} />
+          <TradesTable positions={closed} atrFor={atrFor} atrLabel={atrLabel} />
         )}
       </div>
     </div>
