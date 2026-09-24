@@ -155,9 +155,12 @@ export default function CandleChart({
     const plotW = W - AXIS_W
     const plotH = H - TIME_H - PAD_B
     const step = plotW / rows.length
-    // Delta's bodies are slim with a clear gap between them; filling the
-    // slot turned a sparse window into a row of slabs.
-    const bodyW = Math.max(1.5, Math.min(7, step * 0.45))
+    // Body width has to follow the slot, not a fixed cap. A flat 7 was
+    // tuned when a window held ~30 bars; the 15m window holds 15, so slots
+    // are twice as wide and the same 7 drew hairlines adrift in whitespace.
+    // 62% of the slot reads as a candle at every bar count, and the cap only
+    // stops the sparsest windows turning into billboards.
+    const bodyW = Math.max(2, Math.min(22, step * 0.62))
 
     const y = (v) => PAD_T + ((max - v) / (max - min)) * (plotH - PAD_T)
     const x = (i) => i * step + step / 2
@@ -330,7 +333,7 @@ export default function CandleChart({
               <line x1={x(i)} x2={x(i)} y1={y(c.high)} y2={y(c.low)}
                     stroke={color} strokeWidth="1" />
               <rect x={x(i) - bodyW / 2} y={top} width={bodyW}
-                    height={Math.max(1, bottom - top)} fill={color} />
+                    height={Math.max(1.5, bottom - top)} fill={color} />
             </g>
           )
         })
