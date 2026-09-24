@@ -423,22 +423,23 @@ export default function TradePanel({ atrInfo, account, workerLive, slippage, onS
                 <span>24h L <span className="text-slate-300">{money(dailyRange.low24h)}</span></span>
               </>
             )}
-            {/* The gate the bot is judged on, read on the candles the strategy
-                is set to. It sits with the other market stats because that is
-                what it is - a reading, not a control. */}
+            {/* The gate the bot is judged on, sitting with the other market
+                stats because that is what it is - a reading, not a control.
+                Reads "15m ATR 199.7", the way 24h H reads: the period the
+                figure covers, then what it is, then the number. It follows the
+                SAVED settings, so editing a filter does not move it. */}
             {atrInfo?.atr != null && (
               <span title={Number(atrInfo.minimum) > 0
                 ? `Wilder ATR on ${atrInfo.resolution} candles. The strategy needs`
                   + ` more than ${Number(atrInfo.minimum).toFixed(0)} to enter a round.`
                 : `Wilder ATR on ${atrInfo.resolution} candles. No minimum is set,`
                   + ' so this filter passes every round.'}>
-                ATR{' '}
+                {atrInfo.resolution} ATR{' '}
                 <span className={Number(atrInfo.minimum) > 0
                   && atrInfo.atr <= Number(atrInfo.minimum)
                   ? 'text-amber-400' : 'text-slate-300'}>
                   {atrInfo.atr.toFixed(1)}
                 </span>
-                <span className="ml-1 text-slate-600">{atrInfo.resolution}</span>
               </span>
             )}
           </div>

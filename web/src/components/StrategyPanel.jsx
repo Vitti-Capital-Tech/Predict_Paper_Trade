@@ -59,43 +59,40 @@ function useLiveAtr({ underlying, resolution, period }) {
   }, [candles, period, state])
 }
 
-/** Is the gate open on this reading? `minimum` of 0 means there is no gate. */
-function atrVerdict(atr, minimum) {
-  const gated = Number(minimum) > 0
-  return { gated, open: atr != null && (!gated || atr > Number(minimum)) }
-}
-
-/** Expanded form, beside the fields it is judging. */
-function LiveAtr({ atr, state, underlying, resolution, period, minimum }) {
-  const { gated, open } = atrVerdict(atr, minimum)
+/**
+  * What the settings in the form would read, beside the fields setting them.
+  *
+  * A preview, not a status: the header shows what the bot is running on, and
+  * this shows what it would run on if you saved. They are the same number
+  * until you touch a field, which is exactly when the difference matters.
+  *
+  * It deliberately does not restate the underlying, resolution and period —
+  * those are the three fields immediately to the right of it — nor the
+  * open/closed verdict, which belongs to the saved setting rather than to a
+  * draft that is not in force yet.
+  */
+function LiveAtr({ atr, state, unsaved }) {
   return (
     <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border
                     border-white/10 bg-ink-800/60 px-3 py-2">
       <div className="min-w-0">
-        <p className="text-[11px] text-slate-500">Right now</p>
-        <p className="nums mt-0.5 text-lg font-semibold leading-none text-slate-100">
-          {state === 'error' ? '—'
-            : atr == null ? <span className="text-sm text-slate-500">loading…</span>
-            : atr.toFixed(1)}
-          {atr != null && (
-            <span className="ml-1.5 text-[11px] font-normal text-slate-500">pts</span>
-          )}
+        <p className="text-[11px] text-slate-500">
+          {unsaved ? 'Preview' : 'ATR now'}
+        </p>
+        <p className={`mt-0.5 text-[10px] ${
+          unsaved ? 'text-amber-400/90' : 'text-slate-600'}`}>
+          {unsaved ? 'Save to apply' : 'in force'}
         </p>
       </div>
 
-      <div className="text-right">
-        <p className="nums text-[11px] text-slate-500">
-          {underlying} · {resolution} · {period} bars
-        </p>
-        <p className={`mt-0.5 text-[11px] font-medium ${
-          atr == null ? 'text-slate-500'
-            : open ? 'text-emerald-400' : 'text-amber-400'}`}>
-          {atr == null ? (state === 'error' ? 'feed unavailable' : ' ')
-            : !gated ? 'no gate — every round passes'
-            : open ? `above ${Number(minimum).toFixed(0)} — gate open`
-            : `below ${Number(minimum).toFixed(0)} — gate closed`}
-        </p>
-      </div>
+      <p className="nums text-lg font-semibold leading-none text-slate-100">
+        {state === 'error' ? '—'
+          : atr == null ? <span className="text-sm text-slate-500">loading…</span>
+          : atr.toFixed(1)}
+        {atr != null && (
+          <span className="ml-1.5 text-[11px] font-normal text-slate-500">pts</span>
+        )}
+      </p>
     </div>
   )
 }
@@ -324,16 +321,35 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
     period: draft?.atr_period,
   })
 
+  // Do the draft's ATR settings still match what is saved? While they do,
+  // one reading serves both the preview and the header.
+  const atrUnsaved = !!saved && !!draft && (
+    saved.underlying !== draft.underlying
+    || saved.atr_resolution !== draft.atr_resolution
+    || String(saved.atr_period) !== String(draft.atr_period))
+
+  // The header must report what the bot is actually gated on, so it follows
+  // the saved row. Passing nulls keeps this inert (and silent) whenever the
+  // draft has not diverged.
+  const liveSaved = useLiveAtr({
+    underlying: atrUnsaved ? saved.underlying : null,
+    resolution: atrUnsaved ? saved.atr_resolution : null,
+    period: atrUnsaved ? saved.atr_period : null,
+  })
+
+  const applied = atrUnsaved ? liveSaved : live
+
   // The market header shows this, next to the other market stats. Reporting
   // it up keeps the single fetch here, where the settings that define it live.
   useEffect(() => {
     onAtrChange?.({
-      atr: live.atr,
-      state: live.state,
-      resolution: draft?.atr_resolution ?? null,
-      minimum: draft?.atr_min ?? null,
+      atr: applied.atr,
+      state: applied.state,
+      resolution: (atrUnsaved ? saved?.atr_resolution : draft?.atr_resolution) ?? null,
+      minimum: saved?.atr_min ?? draft?.atr_min ?? null,
     })
-  }, [live.atr, live.state, draft?.atr_resolution, draft?.atr_min, onAtrChange])
+  }, [applied.atr, applied.state, atrUnsaved, saved?.atr_resolution,
+      saved?.atr_min, draft?.atr_resolution, draft?.atr_min, onAtrChange])
 
   if (!draft) {
     return (
@@ -477,14 +493,7 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
           </Section>
 
           <Section title="ATR gate">
-            <LiveAtr
-              atr={live.atr}
-              state={live.state}
-              underlying={draft.underlying}
-              resolution={draft.atr_resolution}
-              period={draft.atr_period}
-              minimum={draft.atr_min}
-            />
+            <LiveAtr atr={live.atr} state={live.state} unsaved={atrUnsaved} />
             <Field label="Chart" info="Which candles the ATR is measured on. 15m smooths out noise; 1m reacts faster but fires on moves too small to trade.">
               <div className="mt-1">
                 <Dropdown
