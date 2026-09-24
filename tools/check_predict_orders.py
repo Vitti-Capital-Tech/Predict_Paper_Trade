@@ -1,9 +1,20 @@
 #!/usr/bin/env python
 """Does Delta accept API orders on Predict (binary) contracts?
 
-The public docs do not mention binary options at all, yet they are plainly in
-/v2/products, /v2/tickers and /v2/l2orderbook. So the docs cannot answer the
-question and only the venue can. This asks it, as cheaply as it can be asked.
+ANSWERED, in the docs, under "Place order errors":
+
+    limit_order_not_allowed_for_binary_options
+        "Limit orders are not supported for binary options products."
+    stop_orders_not_allowed_for_binary_options
+        "Stop orders are not supported for binary options products."
+
+So a limit order on a Predict contract is rejected by design: there is no
+maker path on these products, only market orders. That those errors exist at
+all is also the proof that binaries ARE orderable through the API.
+
+This script is kept because running it turns a documented claim into an
+observed one, and because it is the quickest way to check whether that ever
+changes. Expect the --place run to come back with exactly that error code.
 
 What it does, in order:
 

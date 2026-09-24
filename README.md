@@ -32,6 +32,12 @@ Verified against the live API, not assumed:
 - Expired products publish a `settlement_price`, so settlement is read from the
   venue rather than inferred from spot.
 - Binaries exist on the **global** host (`api.delta.exchange`), not the India host.
+- **Limit orders are not accepted on these products.** The order API rejects them
+  with `limit_order_not_allowed_for_binary_options` ("Limit orders are not
+  supported for binary options products"), and stops likewise with
+  `stop_orders_not_allowed_for_binary_options`. Both are listed under *Place
+  order errors* in the API docs. You can only take, never post — which is why
+  the fill model walks the book rather than offering a maker mode.
 
 ---
 

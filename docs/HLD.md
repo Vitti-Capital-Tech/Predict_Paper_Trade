@@ -118,6 +118,7 @@ Everything below was confirmed against the live API, not assumed from docs.
 | Payout | **1.0 USDT if ITM**, else 0.0 |
 | Commission | **0** maker and taker |
 | Settlement | Expired products publish `settlement_price` (0 or 1) |
+| Order types | **Market only.** `limit_order_not_allowed_for_binary_options` and `stop_orders_not_allowed_for_binary_options` are documented rejections, so there is no maker path |
 
 Because there are exactly three strikes, the strategy's *"1st / middle / last strike"*
 maps onto them without ambiguity:
