@@ -435,11 +435,8 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
                       strokeLinecap="round" />
                 <circle cx="8" cy="8" r="6.3" stroke="currentColor" strokeWidth="1.4" />
               </svg>
-              {/* States the consequence rather than what the Save button does:
-                  the bot is live, and until you save it is still trading the
-                  settings you are editing away from. */}
               <p className="text-[11px] text-amber-300">
-                Unsaved changes — the bot is still running the saved settings.
+                There are unsaved changes — save them to apply.
               </p>
             </div>
           )}
