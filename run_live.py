@@ -89,6 +89,12 @@ def main() -> int:
     engine = Engine(cfg)
     if args.dry_run:
         engine.poll_once()
+        # Close the run. Engine.__init__ registers one, and only run() closes
+        # it, so a dry run used to leave a row marked running for ever.
+        try:
+            engine.store.finish_run(engine.portfolio.cash, "stopped")
+        except Exception:  # noqa: BLE001
+            pass
         log.info("dry run complete")
     else:
         engine.run(max_iterations=args.iterations, duration_sec=args.duration)

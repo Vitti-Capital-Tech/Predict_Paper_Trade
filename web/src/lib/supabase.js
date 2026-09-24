@@ -14,11 +14,20 @@ export const supabase = isConfigured
     })
   : null
 
+/**
+ * The run that most recently checked in — not the one most recently started.
+ *
+ * Ordering by started_at meant any short-lived process became "the" worker
+ * the moment it registered: a --dry-run that exits in two seconds outranked
+ * a worker that had been trading for hours, and the panel then reported no
+ * worker running while trades were landing. The freshest heartbeat is what
+ * the question actually asks.
+ */
 export async function fetchLatestRun() {
   const { data, error } = await supabase
     .from('runs')
     .select('*')
-    .order('started_at', { ascending: false })
+    .order('last_heartbeat', { ascending: false })
     .limit(1)
   if (error) throw error
   return data?.[0] ?? null
