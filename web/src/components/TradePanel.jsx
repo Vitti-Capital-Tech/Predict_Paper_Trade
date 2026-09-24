@@ -61,7 +61,7 @@ function CandleIcon() {
   )
 }
 
-export default function TradePanel({ account, workerLive, slippage, onSlippageChange,
+export default function TradePanel({ atrInfo, account, workerLive, slippage, onSlippageChange,
                                      botAsset, accountId, onOrderResolved }) {
   // A deep link decides the opening market; without one the panel falls back
   // to the nearest round and the strike closest to spot, as before.
@@ -416,12 +416,32 @@ export default function TradePanel({ account, workerLive, slippage, onSlippageCh
         </div>
 
         <div className="flex items-center gap-4">
-          {dailyRange && (
-            <div className="nums hidden gap-4 text-[11px] text-slate-500 sm:flex">
-              <span>24h H <span className="text-slate-300">{money(dailyRange.high24h)}</span></span>
-              <span>24h L <span className="text-slate-300">{money(dailyRange.low24h)}</span></span>
-            </div>
-          )}
+          <div className="nums hidden gap-4 text-[11px] text-slate-500 sm:flex">
+            {dailyRange && (
+              <>
+                <span>24h H <span className="text-slate-300">{money(dailyRange.high24h)}</span></span>
+                <span>24h L <span className="text-slate-300">{money(dailyRange.low24h)}</span></span>
+              </>
+            )}
+            {/* The gate the bot is judged on, read on the candles the strategy
+                is set to. It sits with the other market stats because that is
+                what it is - a reading, not a control. */}
+            {atrInfo?.atr != null && (
+              <span title={Number(atrInfo.minimum) > 0
+                ? `Wilder ATR on ${atrInfo.resolution} candles. The strategy needs`
+                  + ` more than ${Number(atrInfo.minimum).toFixed(0)} to enter a round.`
+                : `Wilder ATR on ${atrInfo.resolution} candles. No minimum is set,`
+                  + ' so this filter passes every round.'}>
+                ATR{' '}
+                <span className={Number(atrInfo.minimum) > 0
+                  && atrInfo.atr <= Number(atrInfo.minimum)
+                  ? 'text-amber-400' : 'text-slate-300'}>
+                  {atrInfo.atr.toFixed(1)}
+                </span>
+                <span className="ml-1 text-slate-600">{atrInfo.resolution}</span>
+              </span>
+            )}
+          </div>
           <span className={`nums text-lg font-semibold ${
             changeUp ? 'text-emerald-400' : 'text-rose-400'}`}>
             {spot ? money(spot) : '—'}

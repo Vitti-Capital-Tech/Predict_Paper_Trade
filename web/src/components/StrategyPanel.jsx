@@ -65,33 +65,6 @@ function atrVerdict(atr, minimum) {
   return { gated, open: atr != null && (!gated || atr > Number(minimum)) }
 }
 
-/** Header form: always on screen, so it stays to one line. */
-function AtrChip({ atr, state, minimum, resolution }) {
-  const { gated, open } = atrVerdict(atr, minimum)
-  const tone = atr == null ? 'text-slate-500'
-    : open ? 'text-emerald-400' : 'text-amber-400'
-  return (
-    <div
-      className="flex items-center gap-2 rounded-lg border border-white/10 bg-ink-800/60
-                 px-2.5 py-1.5"
-      title={atr == null ? 'ATR unavailable'
-        : !gated ? 'No ATR gate — every round passes this filter'
-        : open ? `ATR ${atr.toFixed(1)} is above the ${Number(minimum).toFixed(0)} minimum`
-        : `ATR ${atr.toFixed(1)} is below the ${Number(minimum).toFixed(0)} minimum`}
-    >
-      <span className="text-[10px] uppercase tracking-wide text-slate-500">ATR</span>
-      <span className={`nums text-sm font-semibold leading-none ${tone}`}>
-        {state === 'error' ? '—' : atr == null ? '···' : atr.toFixed(1)}
-      </span>
-      <span className="nums text-[10px] text-slate-600">{resolution}</span>
-      {atr != null && gated && (
-        <span className={`h-1.5 w-1.5 rounded-full ${
-          open ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-      )}
-    </div>
-  )
-}
-
 /** Expanded form, beside the fields it is judging. */
 function LiveAtr({ atr, state, underlying, resolution, period, minimum }) {
   const { gated, open } = atrVerdict(atr, minimum)
@@ -248,7 +221,7 @@ function Toggle({ on, onChange, label }) {
 }
 
 export default function StrategyPanel({ account, workerLive, onSlippageChange,
-                                       onUnderlyingChange }) {
+                                       onUnderlyingChange, onAtrChange }) {
   const [saved, setSaved] = useState(null)   // what the database holds
   const [draft, setDraft] = useState(null)   // what the form shows
   const [busy, setBusy] = useState(false)
@@ -351,6 +324,17 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
     period: draft?.atr_period,
   })
 
+  // The market header shows this, next to the other market stats. Reporting
+  // it up keeps the single fetch here, where the settings that define it live.
+  useEffect(() => {
+    onAtrChange?.({
+      atr: live.atr,
+      state: live.state,
+      resolution: draft?.atr_resolution ?? null,
+      minimum: draft?.atr_min ?? null,
+    })
+  }, [live.atr, live.state, draft?.atr_resolution, draft?.atr_min, onAtrChange])
+
   if (!draft) {
     return (
       <div className="rounded-xl border border-white/10 bg-ink-900 px-4 py-6
@@ -398,12 +382,6 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Outside the collapsible section on purpose: this is the number
-              that decides whether the bot acts at all, and it was only
-              readable with the filters expanded. */}
-          <AtrChip atr={live.atr} state={live.state}
-                   minimum={draft.atr_min} resolution={draft.atr_resolution} />
-
           <button
             onClick={() => setOpen((v) => !v)}
             className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300

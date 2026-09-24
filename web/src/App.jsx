@@ -46,6 +46,10 @@ export default function App() {
   // it, so switching to an ETH account does not leave a BTC screen underneath
   // a panel that says ETH.
   const [botAsset, setBotAsset] = useState(null)
+  // The live ATR reading, computed once in the strategy panel (which owns the
+  // settings that define it) and shown in the market header beside the other
+  // market stats.
+  const [atrInfo, setAtrInfo] = useState(null)
   // Only used to warn when an order is stuck because nothing is filling it.
   const [workerSeenAt, setWorkerSeenAt] = useState(null)
 
@@ -163,8 +167,10 @@ export default function App() {
             they are read first rather than under the thing they control. */}
         <StrategyPanel account={account} workerLive={workerLive}
                        onSlippageChange={setSlippage}
-                       onUnderlyingChange={setBotAsset} />
+                       onUnderlyingChange={setBotAsset}
+                       onAtrChange={setAtrInfo} />
         <TradePanel
+          atrInfo={atrInfo}
           account={account}
           workerLive={workerLive}
           slippage={slippage}
