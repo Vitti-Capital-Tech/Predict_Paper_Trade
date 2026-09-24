@@ -89,6 +89,25 @@ class AccountStrategy:
                 self.cfg.atr.refresh_sec, self.cfg.atr.enabled)
 
 
+WINGS = ("wing_low", "wing_high")
+
+
+def drop_orphan_middle(planned_roles, held_roles, needs_both):
+    """Should the middle leg be dropped for want of its wings?
+
+    Returns the missing wing roles, or () to keep it.
+
+    `Strategy.evaluate` already applies this rule, but against quoted prices.
+    Between that decision and the fill a wing can still be dropped for spread,
+    depth or slippage, and when both go the middle is left standing on its own
+    - which is a different trade from the one the rule allows.
+    """
+    if not needs_both or "middle" not in planned_roles:
+        return ()
+    have = set(planned_roles) | set(held_roles)
+    return tuple(w for w in WINGS if w not in have)
+
+
 class Engine:
     def __init__(self, cfg, client: Optional[DeltaClient] = None, store=None):
         self.cfg = cfg
@@ -478,6 +497,17 @@ class Engine:
                     return
                 continue
             planned.append((leg, fill))
+
+        # The middle rides along with a pair on the extremes, and that has
+        # to hold at fill time, not only at decision time.
+        missing = drop_orphan_middle(
+            [l.role for l, _ in planned], held, cfg.entry.middle_needs_both_wings)
+        if missing:
+            msg = ("middle dropped: needs both wings, %s did not fill"
+                   % " and ".join(missing))
+            log.info("SKIP   %-18s %s", rnd.round_id, msg)
+            self.portfolio.log_event("skip", round_id=rnd.round_id, reasons=[msg])
+            planned = [(l, f) for l, f in planned if l.role != "middle"]
 
         if not planned:
             return
