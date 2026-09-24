@@ -75,15 +75,9 @@ function LiveAtr({ atr, state, unsaved }) {
   return (
     <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border
                     border-white/10 bg-ink-800/60 px-3 py-2">
-      <div className="min-w-0">
-        <p className="text-[11px] text-slate-500">
-          {unsaved ? 'Preview' : 'ATR now'}
-        </p>
-        <p className={`mt-0.5 text-[10px] ${
-          unsaved ? 'text-amber-400/90' : 'text-slate-600'}`}>
-          {unsaved ? 'Save to apply' : 'in force'}
-        </p>
-      </div>
+      <p className="text-[11px] text-slate-500">
+        {unsaved ? 'Preview' : 'ATR now'}
+      </p>
 
       <p className="nums text-lg font-semibold leading-none text-slate-100">
         {state === 'error' ? '—'
@@ -432,6 +426,21 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
 
       {open && (
         <>
+          {dirty && (
+            <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg border
+                            border-amber-500/30 bg-amber-500/10 px-3 py-2">
+              <svg viewBox="0 0 16 16" fill="none"
+                   className="h-3.5 w-3.5 shrink-0 text-amber-400" aria-hidden="true">
+                <path d="M8 5.5v3.2M8 11v.1" stroke="currentColor" strokeWidth="1.6"
+                      strokeLinecap="round" />
+                <circle cx="8" cy="8" r="6.3" stroke="currentColor" strokeWidth="1.4" />
+              </svg>
+              <p className="text-[11px] text-amber-300">
+                There are unsaved changes — save them to apply.
+              </p>
+            </div>
+          )}
+
           <Section title="Timing">
             <Field label="Start time" info="The bot only opens positions after this time of day, in the timezone below. Leave both blank to trade around the clock.">
               <input type="time" className={inputCls} value={draft.session_start ?? ''}
@@ -659,9 +668,7 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
 
           <div className="flex items-center justify-between gap-3 border-t border-white/5
                           px-4 py-3">
-            <p className="text-[11px] text-amber-400">
-              {dirty ? 'Unsaved changes' : ''}
-            </p>
+            <div />
             <div className="flex gap-2">
               <button
                 onClick={() => setDraft(saved)} disabled={!dirty || busy}
