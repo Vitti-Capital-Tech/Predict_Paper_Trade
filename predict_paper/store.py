@@ -43,7 +43,7 @@ class NullStore:
     def adoptable_positions(self, *a: Any, **k: Any) -> list: return []
     def strategy_configs(self, *a: Any, **k: Any) -> list: return []
     def accounts(self, *a: Any, **k: Any) -> list: return []
-    def open_round_keys(self, *a: Any, **k: Any) -> list: return []
+    def entered_round_keys(self, *a: Any, **k: Any) -> list: return []
     def adjust_account_balance(self, *a: Any, **k: Any) -> None: return None
     def resolve_manual_order(self, *a: Any, **k: Any) -> None: return None
 
@@ -231,25 +231,36 @@ class SupabaseStore:
             self._note_failure("strategy_config -> %s" % exc)
             return None
 
-    def open_round_keys(self) -> Optional[List[Dict[str, Any]]]:
-        """Open positions, whoever owns them - account, round, symbol and role.
+    def entered_round_keys(self) -> Optional[List[Dict[str, Any]]]:
+        """Every leg entered recently, whoever owns it - account, round,
+        strike, symbol and role.
 
-        Separate from `adoptable_positions`, which deliberately ignores
-        positions a live worker still holds. "Has this round already been
-        entered" has to count those too, or a worker that starts while another
-        is finishing will enter a round its predecessor is already in.
+        Deliberately not filtered to `status = open`. The question this answers
+        is "has this account already been in this strike this round", and a
+        position closed early answers it just as much as one still open - more
+        so, in fact, since re-entering a strike the strategy has just taken
+        profit on is the exact case worth refusing.
+
+        Also not filtered the way `adoptable_positions` is, which ignores
+        positions a live worker still holds: a worker starting while another
+        finishes must still see the rounds its predecessor is in.
+
+        Newest first and capped, because only live rounds are ever looked up.
+        At three legs an account and a round every fifteen minutes, a thousand
+        rows reaches back further than any round still open.
         """
         try:
             r = self.session.get("%s/positions" % self.base, timeout=self.timeout,
-                                 params={"status": "eq.open",
-                                         "select": "account_id,round_id,symbol,role",
+                                 params={"select": "account_id,round_id,symbol,"
+                                                   "role,strike",
+                                         "order": "entry_time.desc",
                                          "limit": "1000"})
             if r.status_code >= 400:
-                self._note_failure("open rounds -> %s" % r.status_code)
+                self._note_failure("entered rounds -> %s" % r.status_code)
                 return None
             return r.json() or []
         except Exception as exc:  # noqa: BLE001
-            self._note_failure("open rounds -> %s" % exc)
+            self._note_failure("entered rounds -> %s" % exc)
             return None
 
     def accounts(self) -> Optional[List[Dict[str, Any]]]:

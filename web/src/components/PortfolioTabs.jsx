@@ -276,6 +276,20 @@ function TradesTable({ positions, atrFor, atrLabel }) {
       // the first one that recorded it speaks for the round.
       const settledAt = g.legs.find((p) => p.settlement_spot != null)?.settlement_spot
       const winners = g.legs.filter((p) => Number(p.exit_price) >= 0.5).length
+      // What the round pays if it comes good, worked out at entry: every
+      // contract that finishes in the money pays exactly $1, so a leg's
+      // payout is its contract count.
+      //
+      // Summing the legs would be wrong. The wings are on opposite sides,
+      // and spot cannot finish both below the low strike and above the high
+      // one, so they can never both pay. Legs on the SAME side do all pay
+      // together - if spot clears the higher call strike it has cleared the
+      // lower one too - so the honest figure is the better of the two sides.
+      const bySide = g.legs.reduce((m, p) => {
+        m[p.side] = (m[p.side] ?? 0) + Number(p.qty)
+        return m
+      }, {})
+      const payout = Math.max(0, ...Object.values(bySide))
       // The round opened when its first leg filled and finished when its last
       // one did, so the row spans the legs rather than picking one of them.
       const entryTimes = g.legs.map((p) => p.entry_time).filter(Boolean)
@@ -294,6 +308,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
         expiry: expiryCodeToDate(code),
         strikes: [...new Set(g.legs.map((p) => Number(p.strike)))].sort((a, b) => a - b),
         invested,
+        payout,
         returned,
         pnl: returned - invested - fees,
         settledAt: settledAt == null ? null : Number(settledAt),
@@ -325,6 +340,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
             <th className="px-2 py-2 text-right font-medium">Settled at</th>
             <th className="px-2 py-2 text-right font-medium">Legs</th>
             <th className="px-2 py-2 text-right font-medium">Invested</th>
+            <th className="px-2 py-2 text-right font-medium">Payout</th>
             <th className="px-2 py-2 text-right font-medium">Returned</th>
             <th className="px-2 py-2 text-right font-medium">P&amp;L</th>
             <th className="px-4 py-2 text-left font-medium">Outcome</th>
@@ -379,6 +395,16 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                   <td className="nums px-2 py-2.5 text-right text-slate-300"
                       title="What the legs cost to open, at the price actually filled.">
                     {money(r.invested)}
+                  </td>
+                  <td className="nums px-2 py-2.5 text-right text-slate-400"
+                      title="What this round pays if it wins, as it stood at entry.
+                             Every winning contract pays $1. The two wings are on
+                             opposite sides and cannot both win, so this is the better
+                             side rather than the sum of the legs.">
+                    <div>{money(r.payout)}</div>
+                    <div className="text-[10px] text-slate-600">
+                      {r.invested > 0 ? `${(r.payout / r.invested).toFixed(1)}x` : '—'}
+                    </div>
                   </td>
                   <td className="nums px-2 py-2.5 text-right text-slate-300"
                       title="What came back: every winning contract pays $1.00, losers pay nothing.">
@@ -439,6 +465,11 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                                + Number(p.entry_price).toFixed(4)}>
                       {money(Number(p.entry_price) * Number(p.qty))}
                     </td>
+                    <td className="nums px-2 py-1.5 text-right text-slate-500"
+                        title={`${Number(p.qty).toLocaleString('en-US')} contracts at `
+                               + `$1.00 each if this leg finishes in the money`}>
+                      {money(Number(p.qty))}
+                    </td>
                     <td className="nums px-2 py-1.5 text-right text-slate-400">
                       {p.exit_price === null || p.exit_price === undefined
                         ? '—' : money(Number(p.exit_price) * Number(p.qty))}
@@ -457,7 +488,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
 
                 {expanded && (
                   <tr className="bg-ink-950/40">
-                    <td colSpan={10} className="px-4 pb-2.5 pl-11 text-[11px] text-slate-600">
+                    <td colSpan={11} className="px-4 pb-2.5 pl-11 text-[11px] text-slate-600">
                       {[...new Set(r.legs.map((p) => p.exit_reason).filter(Boolean))]
                         .join(' · ') || '—'}
                     </td>

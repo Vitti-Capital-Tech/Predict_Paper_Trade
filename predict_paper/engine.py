@@ -141,6 +141,11 @@ class Engine:
         # both-wings rule knows a leg arrived on an earlier tick.
         self._held_symbols: set = set()
         self._held_roles: dict = {}
+        # Strikes this account has entered in a round, whether or not it still
+        # holds them. A round has three strikes, so this is what caps it at
+        # three entries: taking profit on a leg early does not put its strike
+        # back on the market.
+        self._held_strikes: dict = {}
         self.maybe_adopt(time.time())
         self.atr_gate = AtrGate(
             self.client, cfg.atr.candle_symbol, cfg.atr.resolution,
@@ -339,15 +344,19 @@ class Engine:
             return
         self._adopt_at = now_ts
 
-        keys = self.store.open_round_keys()
+        keys = self.store.entered_round_keys()
         if keys is not None:
             self._held_symbols = {
                 (k.get("account_id"), k.get("symbol")) for k in keys}
             roles: dict = {}
+            strikes: dict = {}
             for k in keys:
-                roles.setdefault((k.get("account_id"), k.get("round_id")),
-                                 set()).add(k.get("role"))
+                where = (k.get("account_id"), k.get("round_id"))
+                roles.setdefault(where, set()).add(k.get("role"))
+                if k.get("strike") is not None:
+                    strikes.setdefault(where, set()).add(float(k["strike"]))
             self._held_roles = roles
+            self._held_strikes = strikes
 
         try:
             rows = self.store.adoptable_positions(self.cfg.adopt_stale_after_sec)
@@ -466,18 +475,33 @@ class Engine:
         def wants_more(symbol: str) -> bool:
             """Is this leg worth another go on this tick?
 
-            Only with partial entry on, and only for a gap big enough to be
-            worth crossing a spread for. Without the floor a leg that landed
-            at 99% of target would try again every two seconds for the rest
-            of the round.
-            """
-            return partial and short_by(symbol) >= TOPUP_FLOOR_FRAC * target
+            Three conditions. Partial entry has to be on; the position has to
+            still be open; and the gap has to be big enough to be worth
+            crossing a spread for. Without the floor a leg that landed at 99%
+            of target would try again every two seconds for the rest of the
+            round.
 
-        # A leg already held is normally finished with. Under partial entry a
-        # short fill is not finished with - it is owed the rest.
+            The open check is what separates finishing an entry from starting
+            a new one. Once a leg has been exited its strike is spent for the
+            round, and topping up a position that no longer exists would buy
+            the strike back at whatever price the exit just proved wrong.
+            """
+            if not partial:
+                return False
+            if self._open_leg(aid, rnd.round_id, symbol) is None:
+                return False
+            return short_by(symbol) >= TOPUP_FLOOR_FRAC * target
+
+        # One entry per strike per round, which caps a round at its three
+        # strikes. A leg that was taken and closed early is finished with:
+        # the strike does not come back on the market because the position
+        # left it. Under partial entry a leg still open and still short is a
+        # different case - that is one entry not yet complete, not a second.
+        entered = self._held_strikes.get((aid, rnd.round_id), set())
         legs = [l for l in decision.legs if l.ok
                 and (((aid, l.contract.symbol) not in self._held_symbols
-                      and l.role not in held)
+                      and l.role not in held
+                      and float(l.contract.strike) not in entered)
                      or wants_more(l.contract.symbol))]
         if not legs:
             return
@@ -620,6 +644,8 @@ class Engine:
                     decision.spot, atr, account_id=aid)
             self._held_symbols.add((aid, leg.contract.symbol))
             self._held_roles.setdefault((aid, rnd.round_id), set()).add(leg.role)
+            self._held_strikes.setdefault((aid, rnd.round_id), set()).add(
+                float(leg.contract.strike))
 
     # ---- manual orders from the trade panel -----------------------------
     def process_manual_orders(self, by_symbol: Dict[str, Contract],
