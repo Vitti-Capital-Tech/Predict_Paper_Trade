@@ -520,7 +520,12 @@ class Engine:
             if not price or price <= 0:
                 return 0
             budget = short_by(leg.contract.symbol) if partial else target
-            return int(round(budget / price))
+            # Round DOWN, the way the venue's own ticket does. Checked against
+            # Predict directly: $50 at $0.99 offers 50 contracts and "You
+            # invest: $49.50", not 51 and $50.49; $50 at $0.072 offers 694 and
+            # $49.97, not 695. The budget is a ceiling there, never a target
+            # to be overshot for the sake of a nearer number.
+            return int(budget / price)
 
         # Price every leg first; with require_both_wings, a round is all-or-nothing,
         # so a leg that cannot fill must not leave the other one on naked.
@@ -543,31 +548,40 @@ class Engine:
                 continue
 
             book = self._book(leg.contract.symbol)
+
+            # The budget is the constraint, always - not only under partial
+            # entry. Predict's ticket asks for money, not for a contract
+            # count: you name $50 and the contracts are whatever $50 buys.
+            # Sizing from the quote and then letting the fill cost what it
+            # costs inverts that, and it does not round to a near miss - a
+            # leg quoted at 0.0970 walked to 0.1120 and spent $77.71 of a $50
+            # budget, and one account put $100.55 on a $50 leg. Capping the
+            # spend is not a feature of partial entry; it is what the setting
+            # already claimed to mean.
+            #
+            # The price ceiling is the part that does belong to partial entry:
+            # buying the slice of a leg that clears the odds and slippage
+            # limits, rather than refusing the leg outright.
+            ceiling = None
             if partial:
-                # Rather than refuse a leg whose full size walks past the
-                # limits, buy the part of it that does not. Whichever of the
-                # odds ceiling and the slippage cap binds first is the price
-                # the size has to fit under; the checks below still stand as
-                # the guarantee, this only stops them firing needlessly.
                 ceiling = leg.max_price
                 if cfg.entry.max_slippage is not None and leg.quoted_price is not None:
                     ceiling = min(ceiling,
                                   leg.quoted_price + cfg.entry.max_slippage)
-                qty = int(acct.fills.trim_to_budget(
-                    "buy", qty, book, ceiling, short_by(leg.contract.symbol)))
-                if qty < 1:
-                    msg = "nothing fills within %.4f" % ceiling
-                    key = (rnd.round_id, leg.role, msg)
-                    if key not in self._logged_rejects:
-                        self._logged_rejects.add(key)
-                        log.info("SKIP   %-18s %s: %s",
-                                 rnd.round_id, leg.role, msg)
-                        self.portfolio.log_event(
-                            "skip", round_id=rnd.round_id,
-                            reasons=["%s %s" % (leg.role, msg)])
-                    if cfg.entry.require_both_wings:
-                        return
-                    continue
+            qty = int(acct.fills.trim_to_budget(
+                "buy", qty, book, ceiling, short_by(leg.contract.symbol)))
+            if qty < 1:
+                msg = ("nothing fills within %.4f" % ceiling) if ceiling is not None                     else "the book cannot fill even $1 of this leg"
+                key = (rnd.round_id, leg.role, msg)
+                if key not in self._logged_rejects:
+                    self._logged_rejects.add(key)
+                    log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, msg)
+                    self.portfolio.log_event(
+                        "skip", round_id=rnd.round_id,
+                        reasons=["%s %s" % (leg.role, msg)])
+                if cfg.entry.require_both_wings:
+                    return
+                continue
             fill = acct.fills.simulate("buy", qty, book, leg.contract.best_bid,
                                        leg.contract.best_ask, leg.contract.mark_price)
             if not fill.filled:

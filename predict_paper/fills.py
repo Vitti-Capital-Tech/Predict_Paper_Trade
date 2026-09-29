@@ -145,16 +145,24 @@ def qty_within_spend(book: Dict[str, Any], side: str, qty: float,
     levels.sort(key=lambda x: x[0])
 
     taken = cost = 0.0
+    capped = False
     for price, size in levels:
         room = min(qty - taken, size)
         if room <= 0 or price <= 0:
             break
         if cost + room * price > budget:
             taken += (budget - cost) / price
+            capped = True
             break
         taken += room
         cost += room * price
-    return max(0.0, taken)
+
+    # Running out of book is not running out of money, and the difference
+    # matters: reporting a depth shortfall here would quietly turn an
+    # all-or-nothing order into a partial one, behind the back of the very
+    # setting that decides whether partial fills are allowed. Only answer
+    # when the budget was the thing that bound.
+    return max(0.0, taken) if capped else qty
 
 
 class FillEngine:
