@@ -265,6 +265,67 @@ function Stat({ label, value, sub, tone }) {
  * The round is the unit that means something, so that is the row; the legs are
  * there when you want them.
  */
+/**
+ * What a leg was actually built from.
+ *
+ * The averaged entry price says what the leg cost. It does not say whether
+ * that average was earned evenly or dragged by one slice that had to reach
+ * down the book — and on a strategy whose whole thesis is slippage, that is
+ * the part worth reading. Each line is one fill, with the touch it was
+ * priced against and the running total it built toward.
+ *
+ * Only rendered when there was more than one fill; a leg bought in one go
+ * has nothing to break down, and that is most of them.
+ */
+function FillBreakdown({ fills }) {
+  if (!Array.isArray(fills) || fills.length < 2) return null
+  let running = 0
+  return (
+    <tr className="bg-ink-950/60 text-[11px]">
+      <td colSpan={11} className="px-4 pb-2 pl-16 pt-0.5">
+        <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-600">
+          built from {fills.length} fills
+        </div>
+        <table className="nums w-full max-w-lg text-slate-500">
+          <tbody>
+            {fills.map((f, i) => {
+              const cost = Number(f.qty) * Number(f.price)
+              running += cost
+              const slip = Number(f.slip ?? 0)
+              return (
+                <tr key={i}>
+                  <td className="py-px pr-4 text-slate-600">
+                    {clockOf(f.t)}
+                  </td>
+                  <td className="py-px pr-1 text-right text-slate-400">
+                    {Number(f.qty).toLocaleString('en-US')}
+                  </td>
+                  <td className="py-px pr-4 text-slate-600">
+                    @ {Number(f.price).toFixed(4)}
+                  </td>
+                  <td className="py-px pr-4 text-right text-slate-400">
+                    {money(cost)}
+                  </td>
+                  <td className="py-px pr-4 text-right text-slate-600">
+                    {money(running)}
+                  </td>
+                  <td className={`py-px ${slip > 0 ? 'text-amber-500/70' : 'text-emerald-500/60'}`}
+                      title={f.top == null ? ''
+                        : `Best offer was ${Number(f.top).toFixed(4)} when this filled`
+                          + `; it reached ${f.levels} level${f.levels === 1 ? '' : 's'}`
+                          + ' down the book.'}>
+                    {slip > 0 ? `+${slip.toFixed(4)} slip` : 'at touch'}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </td>
+    </tr>
+  )
+}
+
 function TradesTable({ positions, atrFor, atrLabel }) {
   const [openRound, setOpenRound] = useState(null)
 
@@ -438,7 +499,8 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                 </tr>
 
                 {expanded && r.legs.map((p) => (
-                  <tr key={p.id ?? p.position_id} className="bg-ink-950/40 text-[12px]">
+                  <Fragment key={p.id ?? p.position_id}>
+                  <tr className="bg-ink-950/40 text-[12px]">
                     <td className="py-1.5 pl-11 pr-2 text-slate-400">
                       <span className={`mr-1.5 rounded px-1 py-px text-[10px] font-bold
                                         text-white ${
@@ -512,6 +574,8 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                         ? '' : Number(p.pnl ?? 0) >= 0 ? 'Won' : 'Lost'}
                     </td>
                   </tr>
+                  <FillBreakdown fills={p.fills} />
+                  </Fragment>
                 ))}
 
                 {expanded && (

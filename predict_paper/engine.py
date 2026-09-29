@@ -651,7 +651,7 @@ class Engine:
             if existing is not None:
                 # A leg bought over several ticks is one position at the
                 # average of what was paid, not one position per fill.
-                self.portfolio.add_to_position(existing, fill)
+                self.portfolio.add_to_position(existing, fill, now)
             else:
                 self.portfolio.open_position(
                     rnd.round_id, leg.contract.symbol, leg.role,

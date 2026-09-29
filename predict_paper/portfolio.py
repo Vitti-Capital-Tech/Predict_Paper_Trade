@@ -36,6 +36,11 @@ class Position:
     # How many separate fills built this leg. 1 unless partial entry topped
     # it up, and the only trace of that once the fills are averaged together.
     entry_fills: int = 1
+    # Every fill that built it: when, how many, at what price, and what the
+    # touch was at that moment. The averaged entry_price answers "what did
+    # this cost"; only the individual fills answer "why" - whether the
+    # average was dragged by one bad slice or earned evenly across several.
+    fills: List[Dict[str, Any]] = field(default_factory=list)
     entry_spot: Optional[float] = None
     entry_atr: Optional[float] = None
 
@@ -93,6 +98,19 @@ class Portfolio:
         self.events_path = os.path.join(data_dir, "events_%s.jsonl" % run_name)
 
     # ---- helpers --------------------------------------------------------
+    @staticmethod
+    def _fill_record(fill, now: datetime) -> Dict[str, Any]:
+        """One line of the execution report, kept small: this is stored per
+        leg and a busy leg can carry a dozen."""
+        return {
+            "t": now.isoformat(),
+            "qty": fill.qty,
+            "price": round(fill.avg_price, 6),
+            "top": None if fill.top_price is None else round(fill.top_price, 6),
+            "slip": round(fill.slippage_vs_top, 6),
+            "levels": fill.levels_consumed,
+        }
+
     def _next_id(self, symbol: str) -> str:
         self._seq += 1
         return "%s#%d" % (symbol, self._seq)
@@ -190,6 +208,7 @@ class Portfolio:
                     entry_top_price=row.get("entry_top_price"),
                     entry_slippage=float(row.get("entry_slippage") or 0),
                     entry_fills=int(row.get("entry_fills") or 1),
+                    fills=list(row.get("fills") or []),
                     exit_spot=(float(row["exit_spot"])
                                if row.get("exit_spot") is not None else None),
                     entry_levels=int(row.get("entry_levels") or 0),
@@ -239,6 +258,7 @@ class Portfolio:
             entry_levels=fill.levels_consumed, entry_spot=spot, entry_atr=atr,
             fees=fee, account_id=account_id,
             run_id=getattr(self.store, "run_id", None),
+            fills=[self._fill_record(fill, now)],
         )
         self.cash -= pos.cost + fee
         if account_id:
@@ -257,7 +277,7 @@ class Portfolio:
                  fill.top_price or 0.0, fill.slippage_vs_top)
         return pos
 
-    def add_to_position(self, pos: Position, fill,
+    def add_to_position(self, pos: Position, fill, now: datetime,
                         atr: Optional[float] = None) -> Position:
         """Fold a top-up fill into a leg already held.
 
@@ -282,6 +302,7 @@ class Portfolio:
                               + fill.slippage_vs_top * fill.qty) / total
         pos.entry_levels = max(pos.entry_levels, fill.levels_consumed)
         pos.entry_fills += 1
+        pos.fills.append(self._fill_record(fill, now))
         pos.qty = total
         pos.fees += fee
 
