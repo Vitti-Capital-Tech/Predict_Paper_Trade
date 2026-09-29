@@ -11,12 +11,18 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
 
 log = logging.getLogger(__name__)
+
+# How long to keep believing a column is missing before testing it
+# again. Long enough not to retry on every write, short enough that a
+# migration takes effect while you are still watching for it.
+RETRY_MISSING_COLUMN_SEC = 300.0
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -58,7 +64,13 @@ class SupabaseStore:
         self._lock = threading.Lock()
         self._failures = 0
         self._last_error = ""
-        self._missing_columns: set = set()
+        # Columns Supabase rejected, and when. Not a plain set: a column is
+        # missing until someone runs the migration, and nothing here notices
+        # that they have. Both entry_fills and exit_spot were written, the
+        # migrations were run, and the worker went on dropping them for hours
+        # because it had decided once and never asked again - which looks
+        # exactly like the feature being broken.
+        self._missing_columns: Dict[str, float] = {}
         self.session = requests.Session()
         self.session.headers.update({
             "apikey": service_key,
@@ -159,7 +171,15 @@ class SupabaseStore:
         # Columns added by later migrations. If the migration has not been run,
         # PostgREST rejects the whole row, which would silently stop recording
         # positions - so drop the column once and carry on.
-        for col in list(self._missing_columns):
+        # Ask again now and then, so running a migration is enough on its own
+        # and does not silently also require a restart.
+        now_ts = time.time()
+        for col, dropped_at in list(self._missing_columns.items()):
+            if now_ts - dropped_at > RETRY_MISSING_COLUMN_SEC:
+                del self._missing_columns[col]
+                log.info("re-trying column '%s' - its migration may have been "
+                         "run since it was last rejected", col)
+        for col in self._missing_columns:
             row.pop(col, None)
 
         with self._lock:
@@ -172,7 +192,7 @@ class SupabaseStore:
                     if col in row and col in self._last_error:
                         log.warning("column '%s' missing in Supabase - run the "
                                     "matching migration; continuing without it", col)
-                        self._missing_columns.add(col)
+                        self._missing_columns[col] = time.time()
                         row.pop(col, None)
                         self._post("positions", row,
                                    prefer="resolution=merge-duplicates,return=minimal",
