@@ -266,68 +266,76 @@ function Stat({ label, value, sub, tone }) {
  * there when you want them.
  */
 /**
- * What a leg was actually built from.
+ * What a leg was actually built from, in the table's own columns.
  *
- * The averaged entry price says what the leg cost. It does not say whether
+ * The averaged entry price says what a leg cost. It does not say whether
  * that average was earned evenly or dragged by one slice that had to reach
  * down the book — and on a strategy whose whole thesis is slippage, that is
- * the part worth reading. Each line is one fill, with the touch it was
- * priced against and the running total it built toward.
+ * the part worth reading.
  *
- * Only rendered when there was more than one fill; a leg bought in one go
- * has nothing to break down, and that is most of them.
+ * Every fill sits under the column it actually belongs to, and the two money
+ * columns are the reason the layout works: each fill's cost stacks beneath
+ * the leg's Invested figure and adds up to it, and — because a binary
+ * contract pays exactly $1 — each fill's contract count IS its payout, so
+ * those add up to the leg's Payout too. The arithmetic is visible rather
+ * than asserted. A running total would have had to borrow a column that
+ * means something else, so it lives in the cost cell's tooltip instead.
  */
-function FillBreakdown({ fills }) {
-  if (!Array.isArray(fills) || fills.length < 2) return null
+function FillRows({ fills, open }) {
+  if (!open || !Array.isArray(fills) || fills.length < 2) return null
   let running = 0
-  return (
-    <tr className="bg-ink-950/60 text-[11px]">
-      <td colSpan={11} className="px-4 pb-2 pl-16 pt-0.5">
-        <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-600">
-          built from {fills.length} fills
-        </div>
-        <table className="nums w-full max-w-lg text-slate-500">
-          <tbody>
-            {fills.map((f, i) => {
-              const cost = Number(f.qty) * Number(f.price)
-              running += cost
-              const slip = Number(f.slip ?? 0)
-              return (
-                <tr key={i}>
-                  <td className="py-px pr-4 text-slate-600">
-                    {clockOf(f.t)}
-                  </td>
-                  <td className="py-px pr-1 text-right text-slate-400">
-                    {Number(f.qty).toLocaleString('en-US')}
-                  </td>
-                  <td className="py-px pr-4 text-slate-600">
-                    @ {Number(f.price).toFixed(4)}
-                  </td>
-                  <td className="py-px pr-4 text-right text-slate-400">
-                    {money(cost)}
-                  </td>
-                  <td className="py-px pr-4 text-right text-slate-600">
-                    {money(running)}
-                  </td>
-                  <td className={`py-px ${slip > 0 ? 'text-amber-500/70' : 'text-emerald-500/60'}`}
-                      title={f.top == null ? ''
-                        : `Best offer was ${Number(f.top).toFixed(4)} when this filled`
-                          + `; it reached ${f.levels} level${f.levels === 1 ? '' : 's'}`
-                          + ' down the book.'}>
-                    {slip > 0 ? `+${slip.toFixed(4)} slip` : 'at touch'}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </td>
-    </tr>
-  )
+  return fills.map((f, i) => {
+    const qty = Number(f.qty)
+    const cost = qty * Number(f.price)
+    running += cost
+    const slip = Number(f.slip ?? 0)
+    return (
+      <tr key={i} className="bg-ink-950/60 text-[11px] text-slate-500">
+        <td className="py-px pl-16 pr-2 text-[10px] uppercase tracking-wide
+                       text-slate-600">
+          {i === 0 ? 'fills' : ''}
+        </td>
+        <td className="nums px-2 py-px text-slate-500">
+          {qty.toLocaleString('en-US')} @ {Number(f.price).toFixed(4)}
+        </td>
+        <td className="nums px-2 py-px text-slate-600">{clockOf(f.t)}</td>
+        <td />
+        <td />
+        <td />
+        <td className="nums px-2 py-px text-right text-slate-400"
+            title={`${money(running)} of the leg bought after this fill.`}>
+          {money(cost)}
+        </td>
+        <td className="nums px-2 py-px text-right text-slate-600"
+            title={`${qty.toLocaleString('en-US')} contracts, $1 each if it wins.`}>
+          {money(qty)}
+        </td>
+        <td />
+        <td />
+        <td className={`px-4 py-px text-[10px] ${
+          slip > 0 ? 'text-amber-500/70' : 'text-emerald-500/60'}`}
+            title={f.top == null ? ''
+              : `Best offer was ${Number(f.top).toFixed(4)} when this filled;`
+                + ` it reached ${f.levels} level${f.levels === 1 ? '' : 's'}`
+                + ' down the book.'}>
+          {slip > 0 ? `+${slip.toFixed(4)} slip` : 'at touch'}
+        </td>
+      </tr>
+    )
+  })
 }
 
 function TradesTable({ positions, atrFor, atrLabel }) {
   const [openRound, setOpenRound] = useState(null)
+  // Which legs have their fill breakdown open. A set rather than a single
+  // id: a round can have more than one leg worth comparing at a time.
+  const [openFills, setOpenFills] = useState(() => new Set())
+  const toggleFills = (id) => setOpenFills((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
 
   const rounds = useMemo(() => {
     const by = new Map()
@@ -550,9 +558,15 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                           anything: the fills are averaged into one position,
                           which is right, but it hides that it happened. */}
                       {Number(p.entry_fills) > 1 && (
-                        <div className="text-[10px] text-sky-500/80">
+                        <button
+                          onClick={() => toggleFills(p.id ?? p.position_id)}
+                          title="Show each fill that built this leg"
+                          className="text-[10px] text-sky-500/80 transition-colors
+                                     hover:text-sky-400"
+                        >
+                          {openFills.has(p.id ?? p.position_id) ? '▾' : '▸'}{' '}
                           {p.entry_fills} fills
-                        </div>
+                        </button>
                       )}
                     </td>
                     <td className="nums px-2 py-1.5 text-right text-slate-500"
@@ -574,7 +588,9 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                         ? '' : Number(p.pnl ?? 0) >= 0 ? 'Won' : 'Lost'}
                     </td>
                   </tr>
-                  <FillBreakdown fills={p.fills} />
+                  <FillRows
+                    fills={p.fills}
+                    open={openFills.has(p.id ?? p.position_id)} />
                   </Fragment>
                 ))}
 
