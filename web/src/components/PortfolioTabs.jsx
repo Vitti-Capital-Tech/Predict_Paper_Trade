@@ -28,6 +28,10 @@ const clockOf = (iso) => (iso
   : '—')
 
 const atrText = (v) => (v == null ? 'ATR —' : `ATR ${v.toFixed(1)}`)
+/** Spot beside the ATR, on one line: the two numbers the entry and
+ *  exit rules are actually written in. */
+const spotText = (v) => (v == null ? ''
+  : ` · ${Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`)
 
 /** Asset and expiry both live in the round id: ETH-DDMMYYHHMM. */
 function assetOf(roundId) {
@@ -448,16 +452,23 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                     </td>
                     <td className="nums px-2 py-1.5 text-slate-500">
                       <div>{clockOf(p.entry_time)}</div>
-                      <div className="text-[10px] text-slate-600">
+                      <div className="text-[10px] text-slate-600"
+                           title="ATR and the underlying price when this leg was bought.">
                         {atrText(atrFor(assetOf(r.roundId), p.entry_time
                           ? new Date(p.entry_time).getTime() : null))}
+                        {spotText(p.entry_spot)}
                       </div>
                     </td>
                     <td className="nums px-2 py-1.5 text-slate-500">
                       <div>{clockOf(p.exit_time)}</div>
-                      <div className="text-[10px] text-slate-600">
+                      <div className="text-[10px] text-slate-600"
+                           title={'ATR and the underlying price when this leg ended'
+                                  + ' — whether it was closed early or held to'
+                                  + ' settlement. Legs closed before this was'
+                                  + ' recorded show no price.'}>
                         {atrText(atrFor(assetOf(r.roundId), p.exit_time
                           ? new Date(p.exit_time).getTime() : null))}
+                        {spotText(p.exit_spot ?? p.settlement_spot)}
                       </div>
                     </td>
                     {/* Settled at is a property of the round, not the leg. */}

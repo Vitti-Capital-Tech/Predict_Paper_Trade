@@ -44,6 +44,11 @@ class Position:
     exit_time: Optional[str] = None
     exit_reason: str = ""
     exit_slippage: float = 0.0
+    # Underlying price when the leg ended, however it ended. settlement_spot
+    # only covers legs held to expiry, so a leg closed early had no spot at
+    # all - and the exit rule is written in spot points, which makes the
+    # number it fired on the one worth keeping.
+    exit_spot: Optional[float] = None
     fees: float = 0.0
     # Underlying price when the position settled (approximate - see
     # migration 003). None for positions closed before expiry.
@@ -185,6 +190,8 @@ class Portfolio:
                     entry_top_price=row.get("entry_top_price"),
                     entry_slippage=float(row.get("entry_slippage") or 0),
                     entry_fills=int(row.get("entry_fills") or 1),
+                    exit_spot=(float(row["exit_spot"])
+                               if row.get("exit_spot") is not None else None),
                     entry_levels=int(row.get("entry_levels") or 0),
                     entry_spot=row.get("entry_spot"),
                     entry_atr=row.get("entry_atr"),
@@ -297,10 +304,11 @@ class Portfolio:
         return pos
 
     def close_position(self, pos: Position, fill, now: datetime,
-                       reason: str) -> None:
+                       reason: str, exit_spot: Optional[float] = None) -> None:
         fee = fill.qty * fill.avg_price * self.cfg.taker_fee_rate
         pos.exit_price = fill.avg_price
         pos.exit_time = now.isoformat()
+        pos.exit_spot = exit_spot
         pos.exit_reason = reason
         pos.exit_slippage = fill.slippage_vs_top
         pos.fees += fee
@@ -312,6 +320,9 @@ class Portfolio:
                         now: datetime,
                         settlement_spot: Optional[float] = None) -> None:
         pos.settlement_spot = settlement_spot
+        # Same field for both endings, so reading "what was spot when this
+        # leg ended" needs one column and not a rule about which to prefer.
+        pos.exit_spot = settlement_spot
         pos.exit_price = settlement_price
         pos.exit_time = now.isoformat()
         pos.exit_reason = "settled %s" % ("ITM" if settlement_price >= 0.5 else "OTM")

@@ -150,6 +150,7 @@ class SupabaseStore:
             "exit_time": _iso(pos.get("exit_time")),
             "exit_reason": pos.get("exit_reason"),
             "exit_slippage": pos.get("exit_slippage") or 0,
+            "exit_spot": pos.get("exit_spot"),
             "fees": pos.get("fees") or 0,
             "settlement_spot": pos.get("settlement_spot"),
             "account_id": pos.get("account_id"),
@@ -165,7 +166,8 @@ class SupabaseStore:
                             prefer="resolution=merge-duplicates,return=minimal",
                             params={"on_conflict": "run_id,position_id"})
             if ok is None and self._last_error:
-                for col in ("settlement_spot", "account_id", "entry_fills"):
+                for col in ("settlement_spot", "account_id", "entry_fills",
+                            "exit_spot"):
                     if col in row and col in self._last_error:
                         log.warning("column '%s' missing in Supabase - run the "
                                     "matching migration; continuing without it", col)

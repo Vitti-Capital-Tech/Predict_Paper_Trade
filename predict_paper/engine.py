@@ -426,7 +426,8 @@ class Engine:
                 self.portfolio.log_event("exit_blocked", symbol=pos.symbol,
                                          reason=fill.reason, intended=reason)
                 continue
-            self.portfolio.close_position(pos, fill, now, reason)
+            self.portfolio.close_position(
+                pos, fill, now, reason, self._last_spot.get(pos.symbol))
 
     def _open_leg(self, aid: Optional[int], round_id: str, symbol: str):
         """This account's open position on a contract, if it already holds one."""
@@ -847,7 +848,9 @@ class Engine:
                 return
 
         # close_position credits the owning account through _finish().
-        self.portfolio.close_position(pos, fill, now, "closed from panel")
+        self.portfolio.close_position(
+            pos, fill, now, "closed from panel",
+            self._last_spot.get(pos.symbol))
         self.store.resolve_manual_order(
             oid, "filled", position_id=pos.position_id,
             fill_price=fill.avg_price, contracts=fill.qty)
