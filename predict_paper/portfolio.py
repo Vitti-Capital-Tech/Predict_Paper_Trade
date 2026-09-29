@@ -33,6 +33,9 @@ class Position:
     entry_top_price: Optional[float] = None
     entry_slippage: float = 0.0
     entry_levels: int = 0
+    # How many separate fills built this leg. 1 unless partial entry topped
+    # it up, and the only trace of that once the fills are averaged together.
+    entry_fills: int = 1
     entry_spot: Optional[float] = None
     entry_atr: Optional[float] = None
 
@@ -181,6 +184,7 @@ class Portfolio:
                     entry_time=str(row.get("entry_time") or ""),
                     entry_top_price=row.get("entry_top_price"),
                     entry_slippage=float(row.get("entry_slippage") or 0),
+                    entry_fills=int(row.get("entry_fills") or 1),
                     entry_levels=int(row.get("entry_levels") or 0),
                     entry_spot=row.get("entry_spot"),
                     entry_atr=row.get("entry_atr"),
@@ -270,6 +274,7 @@ class Portfolio:
         pos.entry_slippage = (pos.entry_slippage * old_qty
                               + fill.slippage_vs_top * fill.qty) / total
         pos.entry_levels = max(pos.entry_levels, fill.levels_consumed)
+        pos.entry_fills += 1
         pos.qty = total
         pos.fees += fee
 

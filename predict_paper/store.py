@@ -142,6 +142,7 @@ class SupabaseStore:
             "entry_top_price": pos.get("entry_top_price"),
             "entry_slippage": pos.get("entry_slippage") or 0,
             "entry_levels": pos.get("entry_levels") or 0,
+            "entry_fills": pos.get("entry_fills") or 1,
             "entry_spot": pos.get("entry_spot"),
             "entry_atr": pos.get("entry_atr"),
             "status": pos.get("status", "open"),
@@ -164,7 +165,7 @@ class SupabaseStore:
                             prefer="resolution=merge-duplicates,return=minimal",
                             params={"on_conflict": "run_id,position_id"})
             if ok is None and self._last_error:
-                for col in ("settlement_spot", "account_id"):
+                for col in ("settlement_spot", "account_id", "entry_fills"):
                     if col in row and col in self._last_error:
                         log.warning("column '%s' missing in Supabase - run the "
                                     "matching migration; continuing without it", col)

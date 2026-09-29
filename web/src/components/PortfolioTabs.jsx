@@ -158,8 +158,14 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
           count were a restatement of the first and third in other units. */}
       <div className="mt-3 grid grid-cols-3 gap-3 border-t border-white/5 pt-3">
         <Field
-          label="Invested" value={money(invested)}
+          label={Number(p.entry_fills) > 1
+            ? `Invested · ${p.entry_fills} fills` : 'Invested'}
+          value={money(invested)}
           title={`Filled at ${Number(p.entry_price).toFixed(4)} per contract.`
+                 + (Number(p.entry_fills) > 1
+                   ? ` Built from ${p.entry_fills} fills across separate ticks,`
+                     + ' averaged — the book would not sell the whole leg at once.'
+                   : '')
                  + (Number(p.entry_slippage) > 0
                    ? ` Slippage paid: ${money(Number(p.entry_slippage) * Number(p.qty))}.`
                    : ' No slippage — filled at the touch.')}
@@ -462,8 +468,19 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                     <td />
                     <td className="nums px-2 py-1.5 text-right text-slate-400"
                         title={`${Number(p.qty).toLocaleString('en-US')} contracts at `
-                               + Number(p.entry_price).toFixed(4)}>
-                      {money(Number(p.entry_price) * Number(p.qty))}
+                               + Number(p.entry_price).toFixed(4)
+                               + (Number(p.entry_fills) > 1
+                                 ? `, bought in ${p.entry_fills} fills and averaged`
+                                 : '')}>
+                      <div>{money(Number(p.entry_price) * Number(p.qty))}</div>
+                      {/* The only visible trace that partial entry did
+                          anything: the fills are averaged into one position,
+                          which is right, but it hides that it happened. */}
+                      {Number(p.entry_fills) > 1 && (
+                        <div className="text-[10px] text-sky-500/80">
+                          {p.entry_fills} fills
+                        </div>
+                      )}
                     </td>
                     <td className="nums px-2 py-1.5 text-right text-slate-500"
                         title={`${Number(p.qty).toLocaleString('en-US')} contracts at `
