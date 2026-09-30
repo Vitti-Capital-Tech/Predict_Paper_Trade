@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   fetchAccountPositions, fetchRecentCloses, placeManualClose,
+  fetchAccounts, fetchDailyPnl,
   fetchStrategyConfig,
 } from '../lib/supabase'
 import {
@@ -323,6 +324,142 @@ function FillRows({ fills, open }) {
       </tr>
     )
   })
+}
+
+/**
+ * Every account's balance, day by day.
+ *
+ * Deliberately ignores the account selector above it. The question this
+ * answers is comparative — which account is ahead, and on which days — and
+ * that is unanswerable one account at a time.
+ *
+ * Balance is derived rather than read from `accounts.balance`, which is a
+ * single live figure with no history and which also has the cost of any
+ * open position already taken out of it. Starting balance plus realised
+ * P&L to the end of that day is the number that can be stated per day and
+ * that adds up across them.
+ */
+function DailyTable() {
+  const [rows, setRows] = useState(null)
+  const [accounts, setAccounts] = useState([])
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    Promise.all([fetchDailyPnl(), fetchAccounts()])
+      .then(([daily, accts]) => {
+        if (!alive) return
+        setRows(daily)
+        setAccounts(accts)
+        setError(null)
+      })
+      .catch((e) => alive && setError(e.message ?? String(e)))
+    return () => { alive = false }
+  }, [])
+
+  const { days, byDay, closing } = useMemo(() => {
+    // Only accounts that still exist. Positions outlive the account they
+    // belonged to, so a deleted account leaves its days behind in the view —
+    // and those would render as a run of empty rows above the real ones,
+    // reading as "nothing happened" rather than "not this account".
+    const live = new Set(accounts.map((a) => a.id))
+    const mine = (rows ?? []).filter((r) => live.has(r.account_id))
+    const days = [...new Set(mine.map((r) => r.day))].sort()
+    const byDay = new Map()
+    for (const r of mine) {
+      if (!byDay.has(r.day)) byDay.set(r.day, new Map())
+      byDay.get(r.day).set(r.account_id, r)
+    }
+    // Running balance per account, walked forward so a day with no trades
+    // carries the previous close rather than showing a gap.
+    const closing = new Map()
+    for (const a of accounts) {
+      let bal = Number(a.starting_balance ?? 0)
+      const series = new Map()
+      for (const d of days) {
+        bal += Number(byDay.get(d)?.get(a.id)?.pnl ?? 0)
+        series.set(d, bal)
+      }
+      closing.set(a.id, series)
+    }
+    return { days, byDay, closing }
+  }, [rows, accounts])
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2
+                      text-xs text-amber-300">
+        Day-by-day balances need{' '}
+        <code className="rounded bg-black/30 px-1">
+          supabase/migrations/019_daily_account_pnl.sql
+        </code>{' '}
+        run once. ({error})
+      </div>
+    )
+  }
+  if (rows === null) {
+    return <p className="py-10 text-center text-sm text-slate-600">Loading…</p>
+  }
+  if (!days.length) {
+    return <p className="py-10 text-center text-sm text-slate-600">
+      Nothing has settled yet.
+    </p>
+  }
+
+  const dayLabel = (d) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined,
+    { day: 'numeric', month: 'short' })
+
+  return (
+    <div className="overflow-x-auto">
+      <p className="mb-2 text-[11px] text-slate-600">
+        Closing balance each day, with the day&apos;s realised P&amp;L beneath it.
+        All accounts, newest first. Days run to IST midnight.
+      </p>
+      <table className="w-full text-[13px]">
+        <thead className="text-[11px] uppercase tracking-wide text-slate-500">
+          <tr className="border-b border-white/5">
+            <th className="px-3 py-2 text-left font-medium">Day</th>
+            {accounts.map((a) => (
+              <th key={a.id} className="px-3 py-2 text-right font-medium"
+                  title={`Started at ${money(Number(a.starting_balance))}`}>
+                {a.name}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-white/5">
+          {[...days].reverse().map((d) => (
+            <tr key={d} className="hover:bg-white/[0.02]">
+              <td className="nums whitespace-nowrap px-3 py-2 text-slate-300">
+                {dayLabel(d)}
+              </td>
+              {accounts.map((a) => {
+                const cell = byDay.get(d)?.get(a.id)
+                const bal = closing.get(a.id)?.get(d)
+                const pnl = Number(cell?.pnl ?? 0)
+                return (
+                  <td key={a.id} className="nums px-3 py-2 text-right"
+                      title={cell
+                        ? `${cell.rounds} rounds, ${cell.legs} legs,`
+                          + ` ${cell.legs_won} paid`
+                        : 'No rounds settled on this day.'}>
+                    <div className="text-slate-200">
+                      {bal == null ? '—' : money(bal)}
+                    </div>
+                    <div className={`text-[10px] ${
+                      !cell ? 'text-slate-700'
+                        : pnl >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
+                      {cell ? signed(pnl) : 'no trades'}
+                    </div>
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 function TradesTable({ positions, atrFor, atrLabel }) {
@@ -918,7 +1055,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
 
       <div className="flex gap-6 border-b border-white/5 px-4">
         {[['positions', 'Positions', open.length],
-          ['trades', 'Recent Trades', closed.length]].map(([key, label, n]) => (
+          ['trades', 'Recent Trades', closed.length],
+          ['daily', 'Daily · all accounts', 0]].map(([key, label, n]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -981,6 +1119,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
               ))}
             </div>
           </>
+        ) : tab === 'daily' ? (
+          <DailyTable />
         ) : (
           <TradesTable positions={closed} atrFor={atrFor} atrLabel={atrLabel} />
         )}

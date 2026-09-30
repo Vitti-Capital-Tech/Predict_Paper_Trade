@@ -215,6 +215,22 @@ export async function fetchAccountPositions(accountId) {
   return data ?? []
 }
 
+/**
+ * Per-account, per-day results from the `daily_account_pnl` view.
+ *
+ * The view does the grouping because the alternative is pulling every
+ * settled leg into the browser to add up — four thousand rows and growing.
+ * Days are IST; see the migration for why.
+ */
+export async function fetchDailyPnl() {
+  const { data, error } = await supabase
+    .from('daily_account_pnl')
+    .select('*')
+    .order('day', { ascending: true })
+  if (error) throw error
+  return data ?? []
+}
+
 export async function fetchEvents(runId, limit = 60) {
   const { data, error } = await supabase
     .from('events')
