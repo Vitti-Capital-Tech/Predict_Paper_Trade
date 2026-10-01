@@ -847,7 +847,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
     Promise.all(atrAssets.split(',').map(async (asset) => {
       try {
         const rows = await fetchCandles(indexSymbolFor(asset), resolution, hours)
-        return [asset, atrSeries(rows, period)]
+        return [asset, atrSeries(rows, period, resolution)]
       } catch {
         return [asset, []]
       }

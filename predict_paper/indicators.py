@@ -15,6 +15,24 @@ _RESOLUTION_SECONDS = {
 }
 
 
+def closed_bars(candles: List[Dict[str, Any]], step: int,
+                now: float) -> List[Dict[str, Any]]:
+    """Drop the bar that is still forming.
+
+    The venue returns the current bar alongside the finished ones, and its
+    high, low and close move on every tick until it closes. Measured live: on
+    15m/p10 it read 133.63 against 142.70 from closed bars alone - nine points,
+    right on top of the gates these accounts run at.
+
+    It is not noise, either. A bar a few minutes old has barely any range yet,
+    so it pulls ATR down early in every bar and lets it recover as the bar
+    fills. The gate then opens and shuts on how far through the bar the clock
+    is, not on how much the market is moving. Volatility is a property of
+    finished bars; this keeps only those.
+    """
+    return [c for c in candles if float(c["time"]) + step <= now]
+
+
 def true_ranges(candles: List[Dict[str, Any]]) -> List[float]:
     out: List[float] = []
     for i in range(1, len(candles)):
@@ -64,6 +82,7 @@ class AtrGate:
         except Exception as exc:  # noqa: BLE001
             log.warning("ATR candle fetch failed: %s", exc)
             return self._value
+        candles = closed_bars(candles, step, now)
         if len(candles) < self.period + 2:
             log.warning("ATR: only %d candles for %s", len(candles), self.symbol)
             return self._value

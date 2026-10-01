@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { fetchStrategyConfig, updateStrategyConfig } from '../lib/supabase'
 import { fetchCandles, indexSymbolFor } from '../lib/delta'
-import { atrSeries, barSeconds } from '../lib/atr'
+import { atrNow, atrSeries, barSeconds } from '../lib/atr'
 import Dropdown from './Dropdown'
 
 /**
@@ -53,10 +53,14 @@ function useLiveAtr({ underlying, resolution, period }) {
   }, [underlying, resolution, period])
 
   // Changing only the period is a recompute, not another request.
+  //
+  // The last CLOSED bar, not the last bar. The newest one in the response is
+  // still forming, and taking it is how this readout drifted nine points away
+  // from what the gate saw - see atrSeries.
   return useMemo(() => {
-    const series = atrSeries(candles, Number(period) || 14)
-    return { atr: series.length ? series[series.length - 1].atr : null, state }
-  }, [candles, period, state])
+    const series = atrSeries(candles, Number(period) || 14, resolution)
+    return { atr: atrNow(series), state }
+  }, [candles, period, resolution, state])
 }
 
 /**

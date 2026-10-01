@@ -35,8 +35,20 @@ function trueRange(cur, prev) {
  *
  * Returned as a series so a whole history of trades costs one pass rather than
  * a fresh reduction per timestamp.
+ *
+ * Each entry is stamped with the moment its last bar CLOSED, not the moment it
+ * opened. That one choice is what keeps the series honest. Stamped by open
+ * time, a lookup at 02:02 found the bar that opened at 02:00 — which, read
+ * back from history, carries its final range: up to thirteen minutes of
+ * market that happened after the trade being described. Read live, the same
+ * entry is the bar still forming, whose range grows on every tick. Stamped by
+ * close time, a lookup only ever finds bars that were finished by then.
+ *
+ * `resolution` is required for that reason; without it there is no close
+ * time to stamp.
  */
-export function atrSeries(candles, period = 14) {
+export function atrSeries(candles, period = 14, resolution = '15m') {
+  const step = barSeconds(resolution)
   const rows = (candles ?? [])
     .filter((c) => Number.isFinite(c?.high) && Number.isFinite(c?.low)
                    && Number.isFinite(c?.close))
@@ -51,12 +63,17 @@ export function atrSeries(candles, period = 14) {
 
   // Seed with the simple mean of the first `p` true ranges, then smooth.
   let atr = tr.slice(0, p).reduce((a, b) => a + b, 0) / p
-  const out = [{ time: rows[p].time, atr }]
+  const out = [{ time: rows[p].time + step, atr }]
   for (let i = p; i < tr.length; i += 1) {
     atr = (atr * (p - 1) + tr[i]) / p
-    out.push({ time: rows[i + 1].time, atr })
+    out.push({ time: rows[i + 1].time + step, atr })
   }
   return out
+}
+
+/** ATR from the last bar that has finished — what the gate is judged on. */
+export function atrNow(series) {
+  return atrAt(series, Math.floor(Date.now() / 1000))
 }
 
 /**
