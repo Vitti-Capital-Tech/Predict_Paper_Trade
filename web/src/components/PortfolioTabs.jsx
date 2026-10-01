@@ -267,6 +267,113 @@ function Stat({ label, value, sub, tone }) {
  * there when you want them.
  */
 /**
+ * Open P&L for a set of legs, honest about the ones it cannot price.
+ *
+ * A leg with no bid has no current value, and the old total simply skipped
+ * it — so a round with one unpriced leg reported a P&L for fewer legs than
+ * you hold, with nothing to say so. That can flatter a strangle badly: the
+ * wing nobody is bidding for is usually the losing one. `priced` against
+ * `total` is carried so every caller can say "2 of 3 priced".
+ */
+function combine(legs, marks) {
+  let invested = 0
+  let value = 0
+  let pricedCost = 0
+  let priced = 0
+  const bySide = {}
+  for (const p of legs) {
+    const cost = Number(p.entry_price) * Number(p.qty)
+    invested += cost
+    bySide[p.side] = (bySide[p.side] ?? 0) + Number(p.qty)
+    const m = marks[p.symbol]
+    if (m?.ok) {
+      value += m.price * Number(p.qty)
+      pricedCost += cost
+      priced += 1
+    }
+  }
+  return {
+    invested,
+    value,
+    // Against the cost of the legs that WERE priced, so an unpriced leg does
+    // not count as a total loss either. Both errors are wrong; this one says
+    // which legs it covers.
+    pnl: value - pricedCost,
+    priced,
+    total: legs.length,
+    // Same rule as trade history: the sides cannot both pay, so the best case
+    // is the better side, not the sum of the legs.
+    payout: Math.max(0, ...Object.values(bySide)),
+  }
+}
+
+/**
+ * One round's open legs, read together.
+ *
+ * A strangle is a single bet made of two or three positions, and one wing is
+ * nearly always under water — so its legs read one at a time mostly say
+ * "losing", which tells you nothing about the trade. The header is the round:
+ * what it cost, what the book would pay for all of it now, and what it pays
+ * if it comes in.
+ */
+function OpenRound({ roundId, legs, marks, children }) {
+  const c = combine(legs, marks)
+  const pct = c.invested ? (c.pnl / c.invested) * 100 : null
+  const expiry = expiryCodeToDate(String(roundId).split('-').pop())
+  const partial = c.priced < c.total
+  return (
+    <div className="rounded-xl border border-white/5 bg-ink-950/40 p-3">
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-6 gap-y-1 px-1">
+        <div className="text-sm text-slate-200">
+          <span className="mr-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold
+                           text-slate-400">
+            {assetOf(roundId)}
+          </span>
+          {expiry ? expiry.toLocaleTimeString(undefined,
+            { hour: 'numeric', minute: '2-digit' }) : roundId}
+          <span className="ml-2 text-[11px] text-slate-500">
+            {c.total} leg{c.total === 1 ? '' : 's'}
+          </span>
+        </div>
+        <RoundStat label="Invested" value={money(c.invested)} />
+        <RoundStat label="Value now"
+              value={c.priced ? money(c.value) : '—'}
+              title="What the book would pay to close every priced leg now." />
+        <RoundStat
+          label="Open P&L"
+          value={c.priced ? `${signed(c.pnl)}${pct === null ? ''
+            : ` (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%)`}` : '—'}
+          tone={c.priced ? c.pnl : undefined}
+          sub={partial ? `${c.priced} of ${c.total} legs priced` : null}
+          title={partial
+            ? 'Some legs have no bid, so they cannot be valued. This covers the'
+              + ' priced legs only, against what those legs cost.'
+            : 'Every leg, valued at what the book would pay for your whole size.'} />
+        <RoundStat label="Pays if right" value={money(c.payout)}
+              title="The better side. The wings are on opposite sides of spot and
+                     cannot both pay." />
+      </div>
+      {children}
+    </div>
+  )
+}
+
+/** The round header's figures — smaller than the Performance stats. */
+function RoundStat({ label, value, tone, sub, title }) {
+  return (
+    <div title={title}>
+      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className={`nums text-sm font-semibold ${
+        tone === undefined ? 'text-slate-200'
+          : tone >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+        {value}
+      </div>
+      {sub && <div className="text-[10px] text-amber-500/80">{sub}</div>}
+    </div>
+  )
+}
+
+/**
  * What a leg was actually built from, in the table's own columns.
  *
  * The averaged entry price says what a leg cost. It does not say whether
@@ -963,6 +1070,17 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
     () => positions.filter((p) => p.status === 'open'), [positions])
   const closed = useMemo(
     () => positions.filter((p) => p.status !== 'open'), [positions])
+  // Open legs grouped by round, soonest expiry first — the round you have to
+  // act on before the halt is the one at the top.
+  const openRounds = useMemo(() => {
+    const by = new Map()
+    for (const p of open) {
+      if (!by.has(p.round_id)) by.set(p.round_id, [])
+      by.get(p.round_id).push(p)
+    }
+    const when = (rid) => expiryCodeToDate(String(rid).split('-').pop())?.getTime() ?? 0
+    return [...by.entries()].sort((a, b) => when(a[0]) - when(b[0]))
+  }, [open])
 
   const rows = tab === 'positions' ? open : closed
 
@@ -982,11 +1100,10 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
   // not a top-of-book figure that no size could get.
   const scopedOpen = useMemo(
     () => scoped.filter((p) => p.status === 'open'), [scoped])
-  const unreal = useMemo(() => scopedOpen.reduce((a, p) => {
-    const m = marks[p.symbol]
-    if (!m?.ok) return a
-    return a + (m.price - Number(p.entry_price)) * Number(p.qty)
-  }, 0), [scopedOpen, marks])
+  // Same arithmetic as each round's header, so the total and the rounds
+  // beneath it cannot disagree.
+  const openTotal = useMemo(() => combine(scopedOpen, marks), [scopedOpen, marks])
+  const unreal = openTotal.pnl
   const committed = useMemo(
     () => scopedOpen.reduce((a, p) => a + Number(p.entry_price) * Number(p.qty), 0),
     [scopedOpen])
@@ -1026,8 +1143,10 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
           label="Unrealised"
           value={scopedOpen.length ? fmt.usd(unreal) : '—'}
           tone={scopedOpen.length ? unreal : undefined}
-          sub={scopedOpen.length
-            ? `${scopedOpen.length} open · ${fmt.usd(committed)} in` : 'nothing open'}
+          sub={!scopedOpen.length ? 'nothing open'
+            : openTotal.priced < openTotal.total
+              ? `${openTotal.priced} of ${openTotal.total} legs priced · ${fmt.usd(committed)} in`
+              : `${scopedOpen.length} open · ${fmt.usd(committed)} in`}
         />
         <Stat
           label="Round win rate"
@@ -1104,18 +1223,24 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
                 No open positions.
               </p>
             )}
-            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-              {open.map((p) => (
-                <OpenCard
-                  key={p.id ?? p.position_id}
-                  p={p}
-                  mark={marks[p.symbol]}
-                  close={closes[p.position_id]}
-                  busy={Boolean(busy[p.position_id])}
-                  tolerance={slippage}
-                  now={now}
-                  onClose={requestClose}
-                />
+            <div className="space-y-3">
+              {openRounds.map(([roundId, legs]) => (
+                <OpenRound key={roundId} roundId={roundId} legs={legs} marks={marks}>
+                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                    {legs.map((p) => (
+                      <OpenCard
+                        key={p.id ?? p.position_id}
+                        p={p}
+                        mark={marks[p.symbol]}
+                        close={closes[p.position_id]}
+                        busy={Boolean(busy[p.position_id])}
+                        tolerance={slippage}
+                        now={now}
+                        onClose={requestClose}
+                      />
+                    ))}
+                  </div>
+                </OpenRound>
               ))}
             </div>
           </>
