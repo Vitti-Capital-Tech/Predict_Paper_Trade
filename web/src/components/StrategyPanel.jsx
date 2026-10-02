@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchStrategyConfig, updateStrategyConfig } from '../lib/supabase'
+import {
+  fetchStrategyConfig, updateStrategyConfig, fetchAllStrategyConfigs,
+} from '../lib/supabase'
 import { fetchCandles, indexSymbolFor } from '../lib/delta'
 import { atrNow, atrSeries, barSeconds } from '../lib/atr'
 import Dropdown from './Dropdown'
+import CopySettingsModal from './CopySettingsModal'
 
 /**
  * The bot's control surface.
@@ -215,8 +218,9 @@ function Toggle({ on, onChange, label }) {
   )
 }
 
-export default function StrategyPanel({ account, workerLive, onSlippageChange,
-                                       onUnderlyingChange, onAtrChange }) {
+export default function StrategyPanel({ account, accounts = [], workerLive,
+                                       onSlippageChange, onUnderlyingChange,
+                                       onAtrChange }) {
   const [saved, setSaved] = useState(null)   // what the database holds
   const [draft, setDraft] = useState(null)   // what the form shows
   const [busy, setBusy] = useState(false)
@@ -224,8 +228,17 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
   const [missing, setMissing] = useState(false)
   const [orphan, setOrphan] = useState(false)
   const [open, setOpen] = useState(false)
+  // Every account's settings, so the copy dialog can show which market each
+  // target trades before it writes over anything. Loaded when it is opened.
+  const [copyOpen, setCopyOpen] = useState(false)
+  const [allConfigs, setAllConfigs] = useState([])
 
   const accountId = account?.id ?? null
+
+  const openCopy = useCallback(() => {
+    fetchAllStrategyConfigs().then(setAllConfigs).catch(() => setAllConfigs([]))
+    setCopyOpen(true)
+  }, [])
 
   // Switching account swaps the whole strategy, so the form has to let go of
   // the previous account's draft rather than showing it under a new name.
@@ -758,7 +771,30 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
 
           <div className="flex items-center justify-between gap-3 border-t border-white/5
                           px-4 py-3">
-            <div />
+            {/* Copies what is saved, not what is typed, so the button waits
+                for Save rather than pushing values this account does not
+                itself have yet. */}
+            <button
+              onClick={openCopy}
+              disabled={dirty || busy || accounts.length < 2}
+              title={dirty
+                ? 'Save your changes before copying them'
+                : accounts.length < 2
+                  ? 'There is only one account'
+                  : 'Apply these filters to other accounts'}
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5
+                         text-xs text-slate-400 transition-colors hover:border-white/25
+                         hover:text-slate-200 disabled:opacity-40
+                         disabled:hover:border-white/10 disabled:hover:text-slate-400"
+            >
+              <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+                <rect x="5.5" y="5.5" width="8" height="8" rx="1.5"
+                      stroke="currentColor" strokeWidth="1.3" />
+                <path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4a1.5 1.5 0 0 0-1.5 1.5V9A1.5 1.5 0 0 0 4 10.5h2"
+                      stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              </svg>
+              Copy to other accounts
+            </button>
             <div className="flex gap-2">
               <button
                 onClick={() => setDraft(saved)} disabled={!dirty || busy}
@@ -798,6 +834,15 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
           {error}
         </p>
       )}
+
+      <CopySettingsModal
+        open={copyOpen}
+        onClose={() => setCopyOpen(false)}
+        account={account}
+        config={saved}
+        accounts={accounts}
+        configs={allConfigs}
+      />
     </div>
   )
 }

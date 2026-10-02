@@ -257,6 +257,37 @@ export async function fetchStrategyConfig(accountId) {
   return data?.[0] ?? null
 }
 
+/**
+ * Every account's settings in one read, so a copy can show what each target
+ * currently trades before it overwrites anything.
+ */
+export async function fetchAllStrategyConfigs() {
+  const { data, error } = await supabase
+    .from('strategy_config')
+    .select('*')
+  if (error) throw error
+  return data ?? []
+}
+
+/**
+ * Apply one patch to several accounts' settings at once.
+ *
+ * `.select()` for the same reason deleteAccount asks for its rows back: with
+ * RLS on, PostgREST will happily update nothing and report success. Returning
+ * the rows lets the caller say how many actually changed instead of claiming
+ * eight when it wrote none.
+ */
+export async function copyStrategyConfigTo(targetAccountIds, patch) {
+  if (!targetAccountIds?.length) return []
+  const { data, error } = await supabase
+    .from('strategy_config')
+    .update(patch)
+    .in('account_id', targetAccountIds)
+    .select()
+  if (error) throw error
+  return data ?? []
+}
+
 export async function updateStrategyConfig(accountId, patch) {
   const { data, error } = await supabase
     .from('strategy_config')
