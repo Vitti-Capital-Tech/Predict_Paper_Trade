@@ -360,9 +360,13 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
 
   const armed = Boolean(saved?.enabled)
   const trading = armed && workerLive
-  const maxPrice = draft.odds_convention === 'payout_multiple'
-    ? 1 / Math.max(Number(draft.wing_odds), 1)
-    : 1 / (1 + Math.max(Number(draft.wing_odds), 0))
+  // The same conversion the worker uses (Config.max_price_for_odds), for both
+  // bars, so the price shown beside each field is the ceiling actually applied.
+  const priceFor = (odds) => (draft.odds_convention === 'payout_multiple'
+    ? 1 / Math.max(Number(odds), 1)
+    : 1 / (1 + Math.max(Number(odds), 0)))
+  const maxPrice = priceFor(draft.wing_odds)
+  const midMaxPrice = priceFor(draft.middle_odds)
 
   return (
     <div className="rounded-xl border border-white/10 bg-ink-900">
@@ -588,6 +592,16 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
                 onChange={(v) => set('trade_middle', v)}
                 label={draft.trade_middle ? `On at 1:${draft.middle_odds}` : 'Off'}
               />
+            </Field>
+            <Field
+              label="Middle odds"
+              info="How cheap the middle strike must be before it is bought. It sits nearest spot, so it is likelier to win and costs more than a wing — which is why it has its own, lower bar. 1:3 means the contract must cost at most $0.25 under risk:reward. A higher number demands a cheaper middle and takes it less often."
+              hint={draft.trade_middle
+                ? `max price $${midMaxPrice.toFixed(4)}`
+                : 'not in use — middle strike is off'}
+            >
+              <Num value={draft.middle_odds} step={0.5} min={0.5} prefix="1:"
+                   onChange={(v) => set('middle_odds', v)} />
             </Field>
           </Section>
 
