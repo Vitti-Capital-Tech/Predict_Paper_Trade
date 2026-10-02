@@ -23,6 +23,11 @@ log = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# The role of the single leg bought while spot is outside the strikes. Its
+# own name, not a wing's: it must not count toward the both-wings rule or
+# let a middle ride along, and a round holding it is locked to it.
+OUTSIDE = "outside"
+
 
 @dataclass
 class LegSignal:
@@ -116,15 +121,83 @@ class Strategy:
                              % (ask, max_price))
         return LegSignal(role, contract, max_price, ask, True, "ok")
 
+    # ---- out of range -------------------------------------------------
+    def _outside_range(self, rnd: Round, dec: RoundDecision, held: set,
+                       lo: float, hi: float, spot: float) -> RoundDecision:
+        """Spot has left the range. At most one leg, at the strike nearest it.
+
+        This replaces what the strangle logic does out here, which is buy the
+        far strike: with spot above the range the lowest put is the one cheap
+        enough to pass the odds, and it pays only if spot falls back through
+        every strike. 101 of the 160 legs bought out of range were that far
+        strike. The rule asked for is the near one, and only the near one.
+
+        Which side - YES or NO - is decided the way every other leg is: test
+        both against the bar and buy the one that passes, the cheaper if both
+        do. That is the middle strike's rule as well.
+        """
+        entry = self.cfg.entry
+        where = "above" if spot > hi else "below"
+        closest = hi if spot > hi else lo
+        span = "spot %.1f %s strikes %g-%g" % (spot, where, lo, hi)
+
+        if held:
+            # Already traded while spot was inside. Adding to it now would mean
+            # buying something out here, which is the far-strike trade this
+            # rule exists to stop.
+            return dec.reject("%s; round already entered, nothing added out of range"
+                              % span)
+        if not entry.trade_outside_range:
+            return dec.reject("%s; out-of-range trading is off" % span)
+
+        sigs = [self._leg_signal(OUTSIDE, rnd.get(closest, side),
+                                 self.cfg.outside_max_price)
+                for side in ("call", "put")]
+        dec.legs = [s for s in sigs if s.contract is not None]
+        ok = [s for s in sigs if s.ok]
+        if not ok:
+            return dec.reject("%s; neither side at %g qualifies: %s" % (
+                span, closest, "; ".join(
+                    "%s %s" % (s.contract.side if s.contract else "?", s.reason)
+                    for s in sigs)))
+        dec.legs = [min(ok, key=lambda s: s.quoted_price)]
+        dec.enter = True
+        return dec
+
+    def _outside_locked(self, rnd: Round, dec: RoundDecision,
+                        held_symbols: set) -> RoundDecision:
+        """A round entered out of range takes that one leg and nothing else.
+
+        Without this, spot drifting back inside would hand the round to the
+        strangle logic, which would buy the other extreme and the middle -
+        turning one deliberate leg into a strangle assembled by accident.
+
+        The leg itself is offered back, so partial entry can still finish
+        buying it. The engine lets a held leg through only to top it up, so
+        this cannot open anything new; and once that leg is closed it cannot be
+        bought again.
+        """
+        mine = [c for c in rnd.contracts if c.symbol in held_symbols]
+        dec.legs = [self._leg_signal(OUTSIDE, c, self.cfg.outside_max_price)
+                    for c in mine]
+        if not any(s.ok for s in dec.legs):
+            return dec.reject("entered out of range; single leg only")
+        dec.enter = True
+        return dec
+
     def evaluate(self, rnd: Round, now: datetime, atr_ok: bool,
                  atr: Optional[float],
-                 held: Optional[set] = None) -> RoundDecision:
+                 held: Optional[set] = None,
+                 held_symbols: Optional[set] = None) -> RoundDecision:
         """`held` names roles already open in this round for this account.
 
         A leg that is already on counts as satisfied: if one extreme filled
         earlier and the other only clears its odds ten minutes later, the pair
         should still complete rather than being refused because both did not
         qualify on the same tick.
+
+        `held_symbols` names the contracts behind those roles. Only the
+        out-of-range rule needs it, to find the one leg a locked round holds.
         """
         held = held or set()
         dec = RoundDecision(round_id=rnd.round_id, enter=False, atr=atr, spot=rnd.spot)
@@ -145,6 +218,18 @@ class Strategy:
         if not rnd.complete:
             return dec.reject("round still listing (%d of 3 strikes)"
                               % len(rnd.strikes))
+
+        # Where spot sits against the strikes decides which strategy applies.
+        # Inside the range is the strangle the rest of this method describes.
+        # Outside it is a different trade entirely, handled on its own - and a
+        # round entered that way stays that way.
+        strikes = rnd.strikes
+        lo, hi = strikes[0], strikes[-1]
+        spot = rnd.spot
+        if OUTSIDE in held:
+            return self._outside_locked(rnd, dec, held_symbols or set())
+        if spot is not None and not (lo <= spot <= hi):
+            return self._outside_range(rnd, dec, held, lo, hi, spot)
 
         if entry.trade_wings:
             wings = rnd.wing_legs(entry.extremes_mode)

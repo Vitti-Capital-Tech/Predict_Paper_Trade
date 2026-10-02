@@ -262,6 +262,11 @@ class Engine:
         c.entry.extremes_mode = row.get("extremes_mode") or c.entry.extremes_mode
         c.entry.middle_needs_both_wings = bool(
             row.get("middle_needs_both_wings", c.entry.middle_needs_both_wings))
+        # Out-of-range trading: off by default, and with its own odds because
+        # the strike nearest spot is priced near the money.
+        c.entry.trade_outside_range = bool(
+            row.get("trade_outside_range", c.entry.trade_outside_range))
+        c.entry.outside_odds = self._num(row, "outside_odds", c.entry.outside_odds)
         c.entry.investment_per_leg = self._num(
             row, "investment_per_leg", c.entry.investment_per_leg)
         c.entry.max_slippage = self._num(row, "max_slippage", c.entry.max_slippage)
@@ -454,7 +459,9 @@ class Engine:
                 >= cfg.portfolio.max_concurrent_rounds):
             return
 
-        decision = acct.strategy.evaluate(rnd, now, atr_ok, atr, held=held)
+        held_syms = {s for (a, s) in self._held_symbols if a == aid}
+        decision = acct.strategy.evaluate(rnd, now, atr_ok, atr, held=held,
+                                          held_symbols=held_syms)
         if not decision.enter:
             key = (rnd.round_id, "|".join(decision.reasons))
             if key not in self._logged_rejects:

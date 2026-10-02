@@ -603,6 +603,36 @@ export default function StrategyPanel({ account, workerLive, onSlippageChange,
               <Num value={draft.middle_odds} step={0.5} min={0.5} prefix="1:"
                    onChange={(v) => set('middle_odds', v)} />
             </Field>
+
+            {/* Hidden until migration 020 has been run, for the same reason as
+                part fills: shown earlier it would toggle, mark the form dirty,
+                and be stripped from the patch on save. */}
+            {saved && 'trade_outside_range' in saved && (
+              <>
+                <Field
+                  label="Outside the range"
+                  info="What to do when spot has moved past every strike — above the highest or below the lowest. Off: no trade until spot comes back between them. On: one trade only, at the strike nearest spot, on whichever side (YES or NO) passes the odds below. The far strike and the middle are never bought out here, and once the round is traded this way nothing else is added to it."
+                  hint={draft.trade_outside_range
+                    ? 'nearest strike only, once' : 'no trade outside the strikes'}
+                >
+                  <Toggle
+                    on={Boolean(draft.trade_outside_range)}
+                    onChange={(v) => set('trade_outside_range', v)}
+                    label={draft.trade_outside_range ? 'Trade nearest' : 'Skip'}
+                  />
+                </Field>
+                <Field
+                  label="Outside odds"
+                  info="How cheap the nearest-strike trade must be. That strike sits close to the money, so it is priced far above what the wing odds allow — which is why it has its own bar. A higher number demands a cheaper contract and trades less often."
+                  hint={draft.trade_outside_range
+                    ? `max price $${priceFor(draft.outside_odds).toFixed(4)}`
+                    : 'not in use — outside trading is off'}
+                >
+                  <Num value={draft.outside_odds} step={0.5} min={0.5} prefix="1:"
+                       onChange={(v) => set('outside_odds', v)} />
+                </Field>
+              </>
+            )}
           </Section>
 
           <Section title="Exit">

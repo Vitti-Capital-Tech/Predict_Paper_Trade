@@ -95,6 +95,18 @@ class EntryConfig:
     middle_needs_both_wings: bool = True
     middle_side: str = "auto"  # auto | call | put
 
+    # When spot has left the range - above the highest strike or below the
+    # lowest - the wings stop being a strangle. One of them is deep in the
+    # money and the other is a long shot across the whole range, and the long
+    # shot is the one cheap enough to pass the odds test: 101 of the 160 legs
+    # bought out of range were the FARTHEST strike. Off, nothing is bought out
+    # of range. On, a single leg at the strike nearest spot, on whichever side
+    # passes `outside_odds`, and nothing else in that round.
+    trade_outside_range: bool = False
+    # Its own bar, because the nearest strike sits close to the money and is
+    # priced like it - far above what the wing odds allow.
+    outside_odds: float = 2.0
+
     # Dollars per leg, the way Predict itself sizes: you name the money and the
     # contracts follow from the price. A fixed contract count is not something
     # the venue offers, so it is not something this exposes.
@@ -209,6 +221,10 @@ class Config:
     @property
     def middle_max_price(self) -> float:
         return self.max_price_for_odds(self.entry.middle_odds)
+
+    @property
+    def outside_max_price(self) -> float:
+        return self.max_price_for_odds(self.entry.outside_odds)
 
     # ---- (de)serialisation ---------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
