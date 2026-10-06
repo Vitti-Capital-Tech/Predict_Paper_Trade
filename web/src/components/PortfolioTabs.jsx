@@ -23,9 +23,22 @@ const money = (v, d = 2) =>
 
 const signed = (v) => `${Number(v) >= 0 ? '+' : '-'}$${Math.abs(Number(v ?? 0)).toFixed(2)}`
 
+/**
+ * Every time on this screen is IST.
+ *
+ * The daily table groups by IST midnight, because the team reads these as
+ * working days. The trade and position times used to render in whatever zone
+ * the browser was in, so on a UTC+10 machine a round that settled at 23:45
+ * IST was labelled 04:15 the next morning - and then did not appear in that
+ * next day's row, which read "no trades". Same instants, two day boundaries.
+ * One zone for the whole tab is what makes the two tables agree.
+ */
+const IST = 'Asia/Kolkata'
+
 /** Clock time for a trade stamp; the date is already on the round's row. */
 const clockOf = (iso) => (iso
   ? new Date(iso).toLocaleTimeString('en-US', {
+      timeZone: IST,
       hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })
   : '—')
 
@@ -48,7 +61,8 @@ function expiryOf(roundId) {
 }
 
 const clockLabel = (d) => (d
-  ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  ? d.toLocaleTimeString('en-US', {
+      timeZone: IST, hour: 'numeric', minute: '2-digit', hour12: true })
       .toLowerCase()
   : '—')
 
@@ -107,7 +121,7 @@ function CardHead({ p, now, pct }) {
             {assetOf(p.round_id)} above {Number(p.strike).toLocaleString('en-US')}
           </p>
           <p className="nums mt-0.5 text-[11px] text-slate-500">
-            At {clockLabel(expiry)}
+            At {clockLabel(expiry)}<span className="text-slate-600"> IST</span>
             {left !== null && (
               <>
                 <span className="mx-1.5 text-slate-700">|</span>
@@ -330,8 +344,8 @@ function OpenRound({ roundId, legs, marks, children }) {
                            text-slate-400">
             {assetOf(roundId)}
           </span>
-          {expiry ? expiry.toLocaleTimeString(undefined,
-            { hour: 'numeric', minute: '2-digit' }) : roundId}
+          {expiry ? expiry.toLocaleTimeString('en-US',
+            { timeZone: IST, hour: 'numeric', minute: '2-digit' }) : roundId}
           <span className="ml-2 text-[11px] text-slate-500">
             {c.total} leg{c.total === 1 ? '' : 's'}
           </span>
@@ -647,8 +661,8 @@ function TradesTable({ positions, atrFor, atrLabel }) {
   }
 
   const when = (d) => (d
-    ? d.toLocaleString('en-US', { day: 'numeric', month: 'short', hour: 'numeric',
-                                  minute: '2-digit', hour12: true })
+    ? d.toLocaleString('en-US', { timeZone: IST, day: 'numeric', month: 'short',
+                                  hour: 'numeric', minute: '2-digit', hour12: true })
     : '—')
 
   return (
@@ -657,10 +671,10 @@ function TradesTable({ positions, atrFor, atrLabel }) {
         <thead>
           <tr className="border-b border-white/10 text-[11px] uppercase tracking-wide
                          text-slate-500">
-            <th className="px-4 py-2 text-left font-medium">Expiry</th>
+            <th className="px-4 py-2 text-left font-medium">Expiry <span className="font-normal normal-case text-slate-600">IST</span></th>
             <th className="px-2 py-2 text-left font-medium">Strikes</th>
-            <th className="px-2 py-2 text-left font-medium" title={atrLabel}>Entry</th>
-            <th className="px-2 py-2 text-left font-medium" title={atrLabel}>Exit</th>
+            <th className="px-2 py-2 text-left font-medium" title={atrLabel}>Entry <span className="font-normal normal-case text-slate-600">IST</span></th>
+            <th className="px-2 py-2 text-left font-medium" title={atrLabel}>Exit <span className="font-normal normal-case text-slate-600">IST</span></th>
             <th className="px-2 py-2 text-right font-medium">Settled at</th>
             <th className="px-2 py-2 text-right font-medium">Legs</th>
             <th className="px-2 py-2 text-right font-medium">Invested</th>
