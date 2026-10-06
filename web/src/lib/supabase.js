@@ -216,6 +216,32 @@ export async function fetchAccountPositions(accountId) {
 }
 
 /**
+ * Every finished leg, for export.
+ *
+ * `fetchAccountPositions` stops at 500 because a screen cannot use more; an
+ * export can. PostgREST also caps a single response at its own row limit
+ * whatever `.limit()` asks for, so this pages until a short page comes back.
+ * Pass no account id to take every account.
+ */
+export async function fetchTradeHistory(accountId = null) {
+  const PAGE = 1000
+  const rows = []
+  // 100 pages is 100k legs - far past anything real, and a bound so a
+  // misbehaving range cannot spin here forever.
+  for (let page = 0; page < 100; page += 1) {
+    let q = supabase.from('positions').select('*').neq('status', 'open')
+    if (accountId) q = q.eq('account_id', accountId)
+    const { data, error } = await q
+      .order('entry_time', { ascending: false })
+      .range(page * PAGE, page * PAGE + PAGE - 1)
+    if (error) throw error
+    rows.push(...(data ?? []))
+    if (!data || data.length < PAGE) break
+  }
+  return rows
+}
+
+/**
  * Per-account, per-day results from the `daily_account_pnl` view.
  *
  * The view does the grouping because the alternative is pulling every

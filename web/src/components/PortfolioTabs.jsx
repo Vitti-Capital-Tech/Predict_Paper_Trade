@@ -9,6 +9,7 @@ import {
 } from '../lib/delta'
 import { atrSeries, atrAt, lookbackHours } from '../lib/atr'
 import { summarise, fmt } from '../lib/stats'
+import ExportTrades from './ExportTrades'
 
 /**
  * Positions / Recent Trades, laid out like Delta's Predict portfolio cards.
@@ -1172,7 +1173,9 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         />
       </div>
 
-      <div className="flex gap-6 border-b border-white/5 px-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2
+                      border-b border-white/5 px-4">
+        <div className="flex gap-6">
         {[['positions', 'Positions', open.length],
           ['trades', 'Recent Trades', closed.length],
           ['daily', 'Daily · all accounts', 0]].map(([key, label, n]) => (
@@ -1192,6 +1195,11 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
             )}
           </button>
         ))}
+        </div>
+
+        {/* History, not a view of the current tab, so it stays put rather
+            than appearing only under Recent Trades. */}
+        <ExportTrades accountId={accountId} accountName={account?.name} />
       </div>
 
       <div className="p-4">
