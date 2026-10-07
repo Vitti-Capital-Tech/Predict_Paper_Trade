@@ -67,9 +67,14 @@ class DeltaAuthError(RuntimeError):
     """A rejected signed call, with whatever Delta said about why."""
 
     def __init__(self, message: str, code: str = "", seen_ip: str = "",
-                 status: int = 0):
+                 status: int = 0, indeterminate: bool = False):
         super().__init__(message)
         self.code = code
+        # Whether the exchange may have acted on this anyway. A timeout or a
+        # 5xx on a write says nothing about whether the order was accepted -
+        # and treating that as a refusal is how a leg gets ordered twice. Only
+        # a 4xx with a reason is a real refusal.
+        self.indeterminate = indeterminate
         # The address Delta saw. It arrives in the error body and is the only
         # authoritative answer to which IP needs whitelisting - inferring it
         # from the host's own interfaces gets IPv6 wrong.
@@ -116,10 +121,13 @@ class DeltaAuthClient:
             r = self.session.request(method, url, headers=headers,
                                      data=body_str or None, timeout=timeout)
         except requests.Timeout as exc:
-            raise DeltaAuthError("%s %s timed out after %.0fs"
-                                 % (method, path, timeout)) from exc
+            raise DeltaAuthError(
+                "%s %s timed out after %.0fs" % (method, path, timeout),
+                indeterminate=(method != "GET")) from exc
         except Exception as exc:  # noqa: BLE001
-            raise DeltaAuthError("%s %s failed: %s" % (method, path, exc)) from exc
+            raise DeltaAuthError(
+                "%s %s failed: %s" % (method, path, exc),
+                indeterminate=(method != "GET")) from exc
 
         try:
             payload = r.json()
@@ -135,7 +143,11 @@ class DeltaAuthClient:
             msg = code or err.get("message") or "HTTP %d on %s" % (r.status_code, path)
             if seen:
                 msg = "%s (Delta saw %s)" % (msg, seen)
-            raise DeltaAuthError(msg, code=code, seen_ip=seen, status=r.status_code)
+            # Delta's own 5xx is its problem, not a verdict on the order.
+            raise DeltaAuthError(msg, code=code, seen_ip=seen,
+                                 status=r.status_code,
+                                 indeterminate=(method != "GET"
+                                                and r.status_code >= 500))
 
         return (payload or {}).get("result")
 

@@ -60,6 +60,9 @@ class LiveFill:
     # True when the exchange already had this exact order. Not an error: it
     # means the intended order is resting, and the guard did its job.
     duplicate: bool = False
+    # The exchange may have acted on this even though we never heard back.
+    # Treated as held, not as a free retry.
+    unconfirmed: bool = False
 
     # The book-walk fields. There is no walk here - the exchange matched the
     # order - so the top is the price asked for and the slippage against it is
@@ -130,16 +133,25 @@ class LiveExecutor:
                 log.info("LIVE   %-14s duplicate %s - already placed",
                          self.name, order["client_order_id"])
                 return LiveFill(False, reason="already placed", duplicate=True)
+            if getattr(exc, "indeterminate", False):
+                # A timeout or a 5xx says nothing about whether the order was
+                # accepted. Reported as unconfirmed so the caller stops
+                # trying: retrying here is how one leg becomes two, and only
+                # the deterministic client_order_id has been preventing it.
+                log.error("LIVE   %-14s order UNCONFIRMED %s qty=%d @ %s: %s "
+                          "- may or may not have reached the exchange",
+                          self.name, symbol, qty, price, exc)
+                return LiveFill(False, reason="unconfirmed: %s" % exc,
+                                unconfirmed=True)
             log.error("LIVE   %-14s order REFUSED %s qty=%d @ %s: %s",
                       self.name, symbol, qty, price, exc)
             return LiveFill(False, reason=str(exc))
         except Exception as exc:  # noqa: BLE001
-            # A timeout here is the dangerous case: the order may have been
-            # accepted. Said plainly, because nothing reconciles it yet.
             log.error("LIVE   %-14s order UNCONFIRMED %s qty=%d @ %s: %s "
                       "- may or may not have reached the exchange",
                       self.name, symbol, qty, price, exc)
-            return LiveFill(False, reason="unconfirmed: %s" % exc)
+            return LiveFill(False, reason="unconfirmed: %s" % exc,
+                            unconfirmed=True)
 
         filled = _f(res.get("size")) - _f(res.get("unfilled_size"))
         avg = _f(res.get("average_fill_price"))
@@ -210,6 +222,12 @@ class LiveExecutor:
                 log.info("LIVE   %-14s duplicate exit %s - already placed",
                          self.name, order["client_order_id"])
                 return LiveFill(False, reason="exit already placed", duplicate=True)
+            if getattr(exc, "indeterminate", False):
+                log.error("LIVE   %-14s exit UNCONFIRMED %s qty=%d @ %s: %s "
+                          "- may or may not have reached the exchange",
+                          self.name, symbol, qty, price, exc)
+                return LiveFill(False, reason="unconfirmed: %s" % exc,
+                                unconfirmed=True)
             log.error("LIVE   %-14s exit REFUSED %s qty=%d @ %s: %s",
                       self.name, symbol, qty, price, exc)
             return LiveFill(False, reason=str(exc))
@@ -217,7 +235,8 @@ class LiveExecutor:
             log.error("LIVE   %-14s exit UNCONFIRMED %s qty=%d @ %s: %s "
                       "- may or may not have reached the exchange",
                       self.name, symbol, qty, price, exc)
-            return LiveFill(False, reason="unconfirmed: %s" % exc)
+            return LiveFill(False, reason="unconfirmed: %s" % exc,
+                            unconfirmed=True)
 
         filled = _f(res.get("size")) - _f(res.get("unfilled_size"))
         avg = _f(res.get("average_fill_price"))

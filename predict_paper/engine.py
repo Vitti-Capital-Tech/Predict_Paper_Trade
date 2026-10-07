@@ -513,6 +513,12 @@ class Engine:
                     # happened; reconciliation will square the record rather
                     # than this guessing a price it did not get.
                     continue
+                if fill.unconfirmed:
+                    # The sale may have gone through. Closing the record on a
+                    # guess would be wrong either way, and re-selling could
+                    # close a position twice; left open for reconciliation,
+                    # and it settles on the exchange regardless.
+                    continue
             else:
                 book = (self._book(pos.symbol)
                         if self.cfg.fills.refetch_book_on_execute else None)
@@ -712,6 +718,18 @@ class Engine:
                 fill = acct.executor.buy(
                     leg.contract.symbol, int(qty), ceiling_live,
                     rnd.round_id, leg.role)
+                if fill.unconfirmed:
+                    # The order may be on the exchange. Treated as held so
+                    # this round stops asking: without it the leg was retried
+                    # every few seconds against a venue that was timing out,
+                    # and only the deterministic client_order_id stopped a
+                    # second one landing. Reconciliation adopts it if it did.
+                    self._held_symbols.add((aid, leg.contract.symbol))
+                    self._held_strikes.setdefault(
+                        (aid, rnd.round_id), set()).add(float(leg.contract.strike))
+                    if cfg.entry.require_both_wings:
+                        return
+                    continue
             else:
                 fill = acct.fills.simulate("buy", qty, book, leg.contract.best_bid,
                                            leg.contract.best_ask, leg.contract.mark_price)
