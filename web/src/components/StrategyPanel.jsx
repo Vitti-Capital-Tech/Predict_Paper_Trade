@@ -757,8 +757,15 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
                 describe a check that cannot fire. */}
             <div className="col-span-2">
               <div className="flex items-baseline justify-between">
-                <span className="text-[11px] text-slate-500">
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
                   {isLive ? 'Limit offset from quote' : 'Slippage tolerance'}
+                  <InfoDot text={isLive
+                    ? 'How far from the quote the order may sit: buys go in at '
+                      + 'the ask plus this, sells at the bid minus it. Nothing '
+                      + 'fills beyond it.'
+                    : 'How far past the touch price a fill may average before '
+                      + 'the leg is refused. Your size walks the book, so a '
+                      + 'large order in a thin market pays more than the quote.'} />
                 </span>
                 <span className="nums text-sm font-semibold text-sky-300">
                   ${Number(draft.max_slippage).toFixed(2)}
@@ -771,13 +778,6 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
                 onChange={(e) => set('max_slippage', Number(e.target.value))}
                 className="slider-theme mt-1.5 w-full"
               />
-              {isLive && (
-                <p className="mt-1 text-[10px] leading-relaxed text-slate-600">
-                  How far from the quote the order may sit: buys go in at the
-                  ask plus this, sells at the bid minus it. Nothing fills
-                  beyond it.
-                </p>
-              )}
               <div className="nums flex justify-between text-[10px] text-slate-600">
                 <span>$0.01</span>
                 <span>$0.10</span>
