@@ -212,7 +212,20 @@ class Engine:
         rows = self.store.strategy_configs()
         if rows is None:
             return
-        balances = {a["id"]: a for a in (self.store.accounts() or [])}
+
+        # Nothing is re-read from an answer that did not arrive. Every account
+        # fact below - paper or live, armed or not, what the balance is -
+        # comes from this one call, and an empty result made all of them read
+        # as "paper, not armed". A live account then took the simulated exit
+        # path: it closed positions in this table that were never sold on the
+        # exchange, reconciliation adopted them back, and the pair looped once
+        # a minute booking profit that did not exist.
+        account_rows = self.store.accounts()
+        if not account_rows:
+            log.warning("account read returned nothing - keeping the previous "
+                        "settings rather than treating live accounts as paper")
+            return
+        balances = {a["id"]: a for a in account_rows}
 
         seen = set()
         for row in rows:
@@ -225,7 +238,13 @@ class Engine:
             # one without its switch on is dropped rather than quietly paper
             # traded. Accounts predating migration 022 have no mode and are
             # paper, which is what they have always been.
-            info = balances.get(aid) or {}
+            info = balances.get(aid)
+            if info is None:
+                # A settings row whose account is not in the list. Leaving it
+                # alone is the only safe reading: assuming paper is what broke
+                # live exits.
+                seen.add(aid)
+                continue
             mode = info.get("mode") or "paper"
             armed_live = bool(info.get("live_enabled"))
             if mode != "paper" and not armed_live:
@@ -1243,6 +1262,14 @@ class Engine:
 
             ours = {p.symbol: p for p in self.portfolio.open_positions
                     if p.account_id == aid}
+            # Contracts this account has already finished with. A position we
+            # closed but the exchange still shows is a disagreement to report,
+            # not a new position to open: adopting it put the exit rule back
+            # in front of the same contract, which closed it again, which let
+            # the next pass adopt it again - once a minute, booking a profit
+            # each time that no sale had earned.
+            done = {p.symbol for p in self.portfolio.closed
+                    if p.account_id == aid}
 
             # Delta has it, we do not - or we have the wrong size.
             for sym, size in on_delta.items():
@@ -1254,6 +1281,19 @@ class Engine:
                     continue
                 round_id = "%s-%s" % (meta["asset"], meta["expiry_code"])
                 price = entry_of.get(sym) or 0.0
+
+                if held is None and sym in done:
+                    # Said once per symbol, then held: this repeats every
+                    # pass until the contract settles, and the point is to be
+                    # noticed rather than to fill the log.
+                    if (aid, sym) not in self._adopted_live:
+                        self._adopted_live.add((aid, sym))
+                        log.warning(
+                            "LIVE   STUCK %s is closed here but still open on "
+                            "Delta qty=%.0f - the exit did not reach the "
+                            "exchange; it will settle there", sym, size)
+                    self._held_symbols.add((aid, sym))
+                    continue
 
                 if held is None:
                     log.warning("LIVE   ADOPT %s qty=%.0f @ %.4f - on Delta, "
