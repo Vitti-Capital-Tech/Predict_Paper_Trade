@@ -602,24 +602,14 @@ export default function TradePanel({ atrInfo, account, workerLive, slippage, onS
           </div>
         </div>
 
-        {/* Trade ticket */}
+        {/* Trade ticket. Paper only: it fills against a simulated book, so on
+            a live account it would write a position for money that never
+            moved - real on screen, unknown to Delta, and flagged as an orphan
+            by reconciliation a minute later. The worker refuses these too.
+            The column is dropped rather than replaced with a notice: an
+            explanation of an absent control is still something to read. */}
+        {mode !== 'live' && (
         <div className="space-y-4 lg:sticky lg:top-20 lg:self-start">
-          {/* A paper ticket on a live account would write a position for
-              money that never moved: the fill is simulated here, so it would
-              read as real on screen and then argue with reconciliation,
-              because Delta has never heard of it. The worker refuses these
-              too - this is so the question is not asked in the first place. */}
-          {mode === 'live' ? (
-            <div className="rounded-xl border border-white/10 bg-ink-900 p-4">
-              <h3 className="text-sm font-semibold text-slate-200">Manual trade</h3>
-              <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
-                Not available on a live account. The ticket places simulated
-                fills, which on real money would record a position that does
-                not exist. The automated strategy sends real orders; this does
-                not, so it is off rather than misleading.
-              </p>
-            </div>
-          ) : (
           <div className="rounded-xl border border-white/10 bg-ink-900 p-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-200">Place paper trade</h3>
@@ -784,9 +774,9 @@ export default function TradePanel({ atrInfo, account, workerLive, slippage, onS
               </p>
             )}
           </div>
-          )}
 
         </div>
+        )}
       </div>
     </div>
   )
