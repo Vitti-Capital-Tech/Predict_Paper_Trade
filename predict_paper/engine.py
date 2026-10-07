@@ -444,19 +444,6 @@ class Engine:
                                  pos.symbol, tte)
                     continue
 
-            # Selling is not implemented for live accounts yet, and an exit
-            # recorded here that never reached the exchange is worse than no
-            # exit at all: the position would still be open on Delta with
-            # nothing watching it. A binary settles itself at expiry, so
-            # holding is a real outcome rather than a stuck one.
-            owner = self.accounts.get(pos.account_id)
-            if owner is not None and getattr(owner, "live", False):
-                if pos.symbol not in self._halt_logged:
-                    self._halt_logged.add(pos.symbol)
-                    log.info("HOLD   %-28s live position - held to settlement "
-                             "(early exits are not live yet)", pos.symbol)
-                continue
-
             # A position is judged by the rules of the account that opened it,
             # not by whichever account was edited last. One without an account
             # - a legacy bot entry, or a manual trade placed before accounts
@@ -481,17 +468,57 @@ class Engine:
             if not should:
                 continue
 
-            book = self._book(pos.symbol) if self.cfg.fills.refetch_book_on_execute else None
-            fill = self.fills.simulate("sell", pos.qty, book,
-                                       contract.best_bid, contract.best_ask,
-                                       contract.mark_price)
+            owner = self.accounts.get(pos.account_id)
+            live = owner is not None and getattr(owner, "live", False)
+
+            if live:
+                if owner.executor is None:
+                    log.warning("exit blocked for %s: live account has no "
+                                "credentials", pos.symbol)
+                    continue
+                # Sold into the bid, with the account's slippage tolerance as
+                # the floor. A ceiling on a buy and a floor on a sell are the
+                # same rule: never trade worse than the price the decision was
+                # made at by more than the account allows.
+                bid = contract.best_bid
+                if bid is None or bid <= 0:
+                    log.warning("exit blocked for %s: nothing bid", pos.symbol)
+                    continue
+                floor = bid
+                if cfg.entry.max_slippage is not None:
+                    floor = max(0.0001, bid - cfg.entry.max_slippage)
+                fill = owner.executor.sell(
+                    pos.symbol, int(pos.qty), floor, pos.round_id, pos.role)
+                if fill.duplicate:
+                    # Already flat on Delta. The exit has effectively
+                    # happened; reconciliation will square the record rather
+                    # than this guessing a price it did not get.
+                    continue
+            else:
+                book = (self._book(pos.symbol)
+                        if self.cfg.fills.refetch_book_on_execute else None)
+                fill = self.fills.simulate("sell", pos.qty, book,
+                                           contract.best_bid, contract.best_ask,
+                                           contract.mark_price)
+
             if not fill.filled:
                 log.warning("exit blocked for %s: %s", pos.symbol, fill.reason)
                 self.portfolio.log_event("exit_blocked", symbol=pos.symbol,
                                          reason=fill.reason, intended=reason)
                 continue
-            self.portfolio.close_position(
-                pos, fill, now, reason, self._last_spot.get(pos.symbol))
+
+            try:
+                self.portfolio.close_position(
+                    pos, fill, now, reason, self._last_spot.get(pos.symbol))
+            except Exception:  # noqa: BLE001
+                # Same rule as on the way in: the sale happened, so a failure
+                # to record it must not become a second sale next cycle.
+                # reduce_only makes that harmless anyway, but the record is
+                # what needs fixing, and loudly.
+                log.exception(
+                    "RECORD FAILED closing %s qty=%s @ %s - the sale happened "
+                    "and is NOT in the table; reconcile by hand",
+                    pos.symbol, fill.qty, fill.avg_price)
 
     def _open_leg(self, aid: Optional[int], round_id: str, symbol: str):
         """This account's open position on a contract, if it already holds one."""

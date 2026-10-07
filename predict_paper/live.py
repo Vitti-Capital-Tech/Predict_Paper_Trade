@@ -159,6 +159,81 @@ class LiveExecutor:
                         levels_consumed=1, requested_qty=float(qty))
 
 
+    def sell(self, symbol: str, qty: int, limit_price: float, round_id: str,
+             role: str, attempt: int = 0) -> LiveFill:
+        """Close `qty` contracts at `limit_price` or better.
+
+        `reduce_only`, so this can only ever shrink a position. Without it a
+        sell on a position that has already gone - settled, or closed by hand
+        on the exchange - would open a short instead of closing nothing, and
+        a short on a binary is a liability this strategy never intends to
+        hold.
+
+        Immediate-or-cancel for the same reason as the buy: an exit that
+        rests is an exit that has not happened, and the rule that asked for
+        it was about this moment.
+        """
+        price = clean_price(limit_price)
+        if price is None or qty < 1:
+            return LiveFill(False, reason="nothing to send (qty=%s price=%s)"
+                                          % (qty, limit_price))
+
+        order = {
+            "product_symbol": symbol,
+            "size": int(qty),
+            "side": "sell",
+            "order_type": "limit_order",
+            "limit_price": price,
+            "time_in_force": "ioc",
+            "reduce_only": True,
+            "client_order_id": clamp_tag(
+                "X%s-%s-%s-%d" % (self.account_id, round_id, role, attempt)),
+        }
+
+        if dry_run():
+            log.info("DRYRUN %-14s would sell %-28s qty=%-6d @ %s  [%s]",
+                     self.name, symbol, qty, price, order["client_order_id"])
+            return LiveFill(False, reason="dry run - not sent")
+
+        try:
+            res = self.client.place_order(order) or {}
+        except DeltaAuthError as exc:
+            code = (exc.code or "").lower()
+            # The position is already gone, so the exit it was asked for has
+            # in effect happened. Reported as closed rather than as a failure
+            # that would be retried every cycle for the rest of the round.
+            if "no_position_for_reduce_only" in code or "reduce_only" in code:
+                log.info("LIVE   %-14s %s already flat on Delta", self.name, symbol)
+                return LiveFill(False, reason="already closed on Delta",
+                                duplicate=True)
+            if "duplicate_client_order_id" in code:
+                log.info("LIVE   %-14s duplicate exit %s - already placed",
+                         self.name, order["client_order_id"])
+                return LiveFill(False, reason="exit already placed", duplicate=True)
+            log.error("LIVE   %-14s exit REFUSED %s qty=%d @ %s: %s",
+                      self.name, symbol, qty, price, exc)
+            return LiveFill(False, reason=str(exc))
+        except Exception as exc:  # noqa: BLE001
+            log.error("LIVE   %-14s exit UNCONFIRMED %s qty=%d @ %s: %s "
+                      "- may or may not have reached the exchange",
+                      self.name, symbol, qty, price, exc)
+            return LiveFill(False, reason="unconfirmed: %s" % exc)
+
+        filled = _f(res.get("size")) - _f(res.get("unfilled_size"))
+        avg = _f(res.get("average_fill_price"))
+        if filled < 1 or avg <= 0:
+            log.info("LIVE   %-14s exit did not fill %s @ %s",
+                     self.name, symbol, price)
+            return LiveFill(False, reason="no fill at %s" % price,
+                            order_id=res.get("id"))
+
+        log.info("LIVE   %-14s SOLD   %-28s qty=%-6.0f @ %.4f  [%s]",
+                 self.name, symbol, filled, avg, order["client_order_id"])
+        return LiveFill(True, qty=filled, avg_price=avg, order_id=res.get("id"),
+                        top_price=float(price), slippage_vs_top=float(price) - avg,
+                        levels_consumed=1, requested_qty=float(qty))
+
+
 def _f(v: Any) -> float:
     try:
         return float(v or 0)
