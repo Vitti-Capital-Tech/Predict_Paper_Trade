@@ -237,14 +237,21 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
     if (prev === null || prev === credStatus) return
     if (!(prev === 'unverified' || prev === 'verifying')) return
     setVerifyingId(null)
-    if (credStatus === 'verified') toast('Connected to Delta', 'ok')
+    if (credStatus === 'verified') {
+      // The balance comes back with the verdict, so the one line can say both
+      // that the account is reachable and what it now holds - rather than
+      // leaving you to go and look whether the figure moved.
+      const bal = liveCred?.balance
+      toast(bal == null ? 'Synced with Delta'
+                        : `Synced with Delta — balance ${money(bal)}`, 'ok')
+    }
     if (credStatus === 'invalid') {
       const why = liveCred?.last_error || 'Could not connect to Delta'
       toast(liveCred?.seen_ip
         ? `${why} — whitelist ${liveCred.seen_ip}`
         : why, 'err')
     }
-  }, [credStatus, liveCred?.last_error, liveCred?.seen_ip, toast])
+  }, [credStatus, liveCred?.last_error, liveCred?.seen_ip, liveCred?.balance, toast])
 
   async function verifyConnection(a) {
     setVerifyingId(a.id)

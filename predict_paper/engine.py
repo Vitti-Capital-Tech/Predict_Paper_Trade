@@ -993,7 +993,7 @@ class Engine:
                 creds.get("base_url") or "")
             self.store.set_verification(
                 aid, "verified" if res.ok else "invalid",
-                "" if res.ok else res.message, res.seen_ip)
+                "" if res.ok else res.message, res.seen_ip, res.balance)
             log.info("CREDS  account %s %s - %s", aid,
                      "verified" if res.ok else "REJECTED", res.message)
 

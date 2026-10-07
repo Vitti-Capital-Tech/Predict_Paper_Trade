@@ -363,13 +363,29 @@ class SupabaseStore:
         return rows[0] if isinstance(rows, list) else rows
 
     def set_verification(self, account_id: int, status: str,
-                         error: str = "", seen_ip: str = "") -> None:
-        self._post("rpc/set_delta_verification", {
+                         error: str = "", seen_ip: str = "",
+                         balance: Optional[float] = None) -> None:
+        """Record the verdict, and the balance it came back with.
+
+        A verification already asks Delta what the account holds, so the
+        figure is free. Writing it is what keeps a live account's balance from
+        being a snapshot taken once when it was created.
+        """
+        payload = {
             "p_account_id": account_id,
             "p_status": status,
             "p_error": (error or None),
             "p_seen_ip": (seen_ip or None),
-        })
+            "p_balance": balance,
+        }
+        if self._post("rpc/set_delta_verification", payload) is not None:
+            return
+        # Migration 026 adds p_balance. Until it is run the function does not
+        # take one, and sending it fails the whole call - which would leave a
+        # check stuck on "verifying" rather than merely missing a balance.
+        # Retried without it so the verdict still lands either way.
+        payload.pop("p_balance", None)
+        self._post("rpc/set_delta_verification", payload)
 
     # ---- recovery -------------------------------------------------------
     def adoptable_positions(self, stale_after_sec: float = 120.0) -> List[Dict[str, Any]]:
