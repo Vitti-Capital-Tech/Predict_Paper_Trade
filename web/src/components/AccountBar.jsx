@@ -5,7 +5,7 @@ import {
   saveDeltaCredentials, requestDeltaCheck, fetchDeltaCheck, adoptDeltaCheck,
   fetchDeltaCredentials, verifyDeltaCredentials,
 } from '../lib/supabase'
-import { PencilIcon, PlugIcon, ResetIcon, TrashIcon } from './icons'
+import { PencilIcon, PlugIcon, ResetIcon, SpinnerIcon, TrashIcon } from './icons'
 import { useToast } from './Toasts'
 
 /**
@@ -34,7 +34,8 @@ const CONN = {
   none:       { dot: 'bg-slate-600', hint: 'No API key saved' },
 }
 
-function IconButton({ title, onClick, tone = 'slate', children }) {
+function IconButton({ title, onClick, tone = 'slate', children,
+                     disabled = false, label }) {
   const tones = {
     slate: 'border-white/10 text-slate-400 hover:border-white/30 hover:bg-white/10'
          + ' hover:text-slate-100',
@@ -43,9 +44,16 @@ function IconButton({ title, onClick, tone = 'slate', children }) {
   }
   return (
     <button
-      type="button" title={title} aria-label={title}
+      type="button" title={title}
+      // The label stays put while the title changes, so the control is still
+      // the same thing to a screen reader mid-action.
+      aria-label={label ?? title}
+      aria-busy={disabled || undefined}
+      disabled={disabled}
       onClick={(e) => { e.stopPropagation(); onClick() }}
-      className={`rounded-md border p-1.5 transition-colors ${tones[tone]}`}
+      className={`rounded-md border p-1.5 transition-colors ${tones[tone]}
+                  disabled:cursor-default disabled:hover:border-white/10
+                  disabled:hover:bg-transparent`}
     >
       {children}
     </button>
@@ -63,6 +71,11 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   // read-only: it identifies which key is in use without being a second place
   // it can be changed.
   const [liveCred, setLiveCred] = useState(null)
+  // Set the moment Verify is pressed, rather than waiting for the poll to
+  // notice: the status only turns 'unverified' in the database, and the next
+  // read of it is up to five seconds away. Without this the button sits
+  // inert for long enough to look like the click missed.
+  const [verifyingId, setVerifyingId] = useState(null)
 
   // id of the row being renamed / re-balanced, and its draft values
   const [editing, setEditing] = useState(null)
@@ -223,6 +236,7 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
     wasStatus.current = credStatus
     if (prev === null || prev === credStatus) return
     if (!(prev === 'unverified' || prev === 'verifying')) return
+    setVerifyingId(null)
     if (credStatus === 'verified') toast('Connected to Delta', 'ok')
     if (credStatus === 'invalid') {
       const why = liveCred?.last_error || 'Could not connect to Delta'
@@ -233,10 +247,13 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   }, [credStatus, liveCred?.last_error, liveCred?.seen_ip, toast])
 
   async function verifyConnection(a) {
+    setVerifyingId(a.id)
     try {
       await verifyDeltaCredentials(a.id)
-      toast('Checking the connection…', 'info')
+      // No toast here. The spinner says it is running, and a second line
+      // saying the same thing would be read as the result.
     } catch (e) {
+      setVerifyingId(null)
       toast(e.message ?? String(e), 'err')
     }
   }
@@ -482,12 +499,23 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                         {/* Rechecking is the one live-account action worth a
                             button of its own: keys get revoked and allowlists
                             get edited, and nothing tells you until you ask. */}
-                        {live && (
-                          <IconButton title="Verify connection"
-                                      onClick={() => verifyConnection(a)}>
-                            <PlugIcon />
-                          </IconButton>
-                        )}
+                        {live && (() => {
+                          // Spinning from the click until the worker answers,
+                          // whichever of the two knows first.
+                          const spinning = verifyingId === a.id
+                            || (a.id === account?.id && credPending)
+                          return (
+                            <IconButton
+                              title={spinning ? 'Checking the connection…'
+                                              : 'Verify connection'}
+                              label="Verify connection"
+                              disabled={spinning}
+                              onClick={() => verifyConnection(a)}
+                            >
+                              {spinning ? <SpinnerIcon /> : <PlugIcon />}
+                            </IconButton>
+                          )
+                        })()}
                         {/* Resetting restores a starting balance this side
                             never had. Only Delta can change a live balance. */}
                         {!live && (

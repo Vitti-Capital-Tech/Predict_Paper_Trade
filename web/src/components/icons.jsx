@@ -96,3 +96,16 @@ export function PlugIcon({ className = 'h-3.5 w-3.5' }) {
     </svg>
   )
 }
+
+/** Work in progress on another machine: no fraction to show, only motion. */
+export function SpinnerIcon({ className = 'h-3.5 w-3.5' }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={`${className} animate-spin`}
+         aria-hidden="true">
+      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.6"
+              className="opacity-25" />
+      <path d="M14 8a6 6 0 0 0-6-6" stroke="currentColor" strokeWidth="1.6"
+            strokeLinecap="round" />
+    </svg>
+  )
+}
