@@ -16,7 +16,8 @@ from .delta import DeltaClient
 from .fills import FillEngine
 from .indicators import AtrGate
 from .portfolio import Portfolio, Position
-from .rounds import Contract, Round, build_rounds, parse_symbol
+from .rounds import (Contract, Round, build_rounds, parse_symbol,
+                     expiry_code_to_dt)
 from .delta_auth import DeltaAuthClient, SETTLEMENT_ASSETS, check_connection
 from .live import LiveExecutor, LiveFill, dry_run
 from .store import build_store
@@ -1372,7 +1373,18 @@ class Engine:
                 if sym in on_delta:
                     self._adopted_live.discard((aid, sym))
                     continue
+                # The expiry is in the symbol, so it is still knowable after
+                # the round has left the ticker feed. Reading it only from
+                # `_expiry_by_symbol` meant an expired round - which is
+                # exactly when Delta drops the position and this side has not
+                # settled it yet - looked like a contract that had vanished.
+                # Two false orphans within three seconds of every expiry is
+                # how a warning stops being read.
                 expiry = self._expiry_by_symbol.get(sym)
+                if expiry is None:
+                    meta = parse_symbol(sym)
+                    if meta:
+                        expiry = expiry_code_to_dt(meta["expiry_code"])
                 if expiry is not None and (expiry - now).total_seconds() <= 0:
                     continue        # expired; settlement is settle_expired's job
                 if (aid, sym) in self._adopted_live:
