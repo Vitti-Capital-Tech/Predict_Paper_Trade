@@ -766,29 +766,56 @@ class Engine:
 
         # The middle rides along with a pair on the extremes, and that has
         # to hold at fill time, not only at decision time.
-        missing = drop_orphan_middle(
-            [l.role for l, _ in planned], held, cfg.entry.middle_needs_both_wings)
-        if missing:
-            msg = ("middle dropped: needs both wings, %s did not fill"
-                   % " and ".join(missing))
-            log.info("SKIP   %-18s %s", rnd.round_id, msg)
-            self.portfolio.log_event("skip", round_id=rnd.round_id, reasons=[msg])
-            planned = [(l, f) for l, f in planned if l.role != "middle"]
+        # Everything below decides whether to KEEP a fill that has already
+        # happened. On paper that is free - nothing was bought, so dropping a
+        # leg from `planned` un-buys it. On a live account the order is on the
+        # exchange and the money is gone, so dropping it only loses the
+        # record: the position stays, nothing marks the leg held, and the next
+        # tick buys it again. That is what bought one middle leg three times
+        # over fifteen seconds. A fill that happened is recorded; the rules
+        # below are for the book that can still be changed.
+        if not acct.live:
+            missing = drop_orphan_middle(
+                [l.role for l, _ in planned], held, cfg.entry.middle_needs_both_wings)
+            if missing:
+                msg = ("middle dropped: needs both wings, %s did not fill"
+                       % " and ".join(missing))
+                log.info("SKIP   %-18s %s", rnd.round_id, msg)
+                self.portfolio.log_event("skip", round_id=rnd.round_id, reasons=[msg])
+                planned = [(l, f) for l, f in planned if l.role != "middle"]
 
         if not planned:
             return
 
-        cap = cfg.portfolio.max_cost_per_round
         total = sum(f.qty * f.avg_price for _, f in planned)
-        if cap is not None and total > cap:
-            log.info("SKIP   %-18s cost %.2f exceeds cap %.2f", rnd.round_id, total, cap)
-            self.portfolio.log_event("skip", round_id=rnd.round_id,
-                                     reasons=["cost %.2f > cap %.2f" % (total, cap)])
-            return
-        if total > acct.balance:
-            log.info("SKIP   %-18s %s: cost %.2f exceeds balance %.2f",
-                     rnd.round_id, acct.name, total, acct.balance)
-            return
+        if acct.live:
+            # Reported, not acted on. A cap breached by a fill that already
+            # happened is something to know about, not a reason to pretend the
+            # position does not exist.
+            cap = cfg.portfolio.max_cost_per_round
+            if cap is not None and total > cap:
+                log.warning("LIVE   %-18s filled %.2f over the %.2f round cap - "
+                            "recorded anyway, the order is on the exchange",
+                            rnd.round_id, total, cap)
+            missing = drop_orphan_middle(
+                [l.role for l, _ in planned], held, cfg.entry.middle_needs_both_wings)
+            if missing:
+                log.warning("LIVE   %-18s middle filled without %s - recorded "
+                            "anyway, it was bought", rnd.round_id,
+                            " and ".join(missing))
+        else:
+            cap = cfg.portfolio.max_cost_per_round
+            if cap is not None and total > cap:
+                log.info("SKIP   %-18s cost %.2f exceeds cap %.2f",
+                         rnd.round_id, total, cap)
+                self.portfolio.log_event(
+                    "skip", round_id=rnd.round_id,
+                    reasons=["cost %.2f > cap %.2f" % (total, cap)])
+                return
+            if total > acct.balance:
+                log.info("SKIP   %-18s %s: cost %.2f exceeds balance %.2f",
+                         rnd.round_id, acct.name, total, acct.balance)
+                return
 
         for leg, fill in planned:
             # Marked as held BEFORE it is recorded, and deliberately so. The
