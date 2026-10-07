@@ -58,9 +58,18 @@ export default function ImportStrategyModal({
 }) {
   const [picked, setPicked] = useState(null)
 
+  // Cleared when the dialog opens, and only then. This used to sit in the
+  // effect below, whose deps include `onClose` - an inline arrow, so a new
+  // function on every render of the panel. The panel reloads its settings
+  // every eight seconds and the account list every five, so the selection
+  // was wiped within a tick or two and the confirmation vanished back to the
+  // list while it was being read.
+  useEffect(() => {
+    if (open) setPicked(null)
+  }, [open])
+
   useEffect(() => {
     if (!open) return
-    setPicked(null)
     const onKey = (e) => { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', onKey)
     const prev = document.body.style.overflow
