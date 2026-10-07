@@ -103,3 +103,11 @@ body {
 .no-spin::-webkit-outer-spin-button,
 .no-spin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .no-spin { -moz-appearance: textfield; appearance: textfield; }
+
+/* An indeterminate progress bar: the wait is on another machine, so there is
+   no fraction to show - only that something is still happening. */
+@keyframes indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+.indeterminate { animation: indeterminate 1.1s ease-in-out infinite; }

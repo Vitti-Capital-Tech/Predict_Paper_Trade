@@ -83,3 +83,16 @@ export function TrashIcon({ className = 'h-3.5 w-3.5' }) {
     </svg>
   )
 }
+
+/** Verify a live account's connection to the exchange. */
+export function PlugIcon({ className = 'h-3.5 w-3.5' }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M8 9.5v3.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M4.8 5.2v2.1a3.2 3.2 0 006.4 0V5.2" stroke="currentColor"
+            strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6.3 2.3v2.6M9.7 2.3v2.6" stroke="currentColor"
+            strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
+}

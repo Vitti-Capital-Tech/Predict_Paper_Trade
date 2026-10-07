@@ -3,8 +3,10 @@ import { Labelled, Secret } from './Fields'
 import {
   createAccount, updateAccount, deleteAccount, countOpenPositions,
   saveDeltaCredentials, requestDeltaCheck, fetchDeltaCheck, adoptDeltaCheck,
+  fetchDeltaCredentials, verifyDeltaCredentials,
 } from '../lib/supabase'
-import { PencilIcon, ResetIcon, TrashIcon } from './icons'
+import { PencilIcon, PlugIcon, ResetIcon, TrashIcon } from './icons'
+import { useToast } from './Toasts'
 
 /**
  * Account switcher.
@@ -47,6 +49,11 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  const toast = useToast()
+  // The key on the selected live account, for the edit view. Shown masked and
+  // read-only: it identifies which key is in use without being a second place
+  // it can be changed.
+  const [liveCred, setLiveCred] = useState(null)
 
   // id of the row being renamed / re-balanced, and its draft values
   const [editing, setEditing] = useState(null)
@@ -105,7 +112,11 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
       await fn()
       await onAccountsChanged()
     } catch (e) {
-      setErr(e.message ?? String(e))
+      // Both: the line stays in the dropdown while it is open, the toast
+      // reaches you if the dropdown has closed behind the failure.
+      const msg = e.message ?? String(e)
+      setErr(msg)
+      toast(msg, 'err')
     } finally {
       setBusy(false)
     }
@@ -128,6 +139,7 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
     if (live) {
       await run(async () => {
         await updateAccount(a.id, { name })
+        toast('Account renamed', 'ok')
         setEditing(null)
       })
       return
@@ -137,12 +149,16 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
       // The starting balance moves with an edited balance, so "reset" keeps
       // meaning "back to what I put in" rather than back to some earlier figure.
       await updateAccount(a.id, { name, balance: value, starting_balance: value })
+      toast('Account updated', 'ok')
       setEditing(null)
     })
   }
 
   async function reset(a) {
-    await run(() => updateAccount(a.id, { balance: a.starting_balance }))
+    await run(async () => {
+      await updateAccount(a.id, { balance: a.starting_balance })
+      toast(`${a.name} reset to ${money(a.starting_balance)}`, 'ok')
+    })
   }
 
   async function remove(a) {
@@ -161,6 +177,7 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
           + 'Close or settle them first.')
       }
       await deleteAccount(a.id)
+      toast(`Deleted ${a.name}`, 'ok')
       setConfirming(null)
       if (a.id === account?.id) {
         const next = accounts.find((x) => x.id !== a.id)
@@ -170,6 +187,26 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   }
 
   const live = mode === 'live'
+
+  // Which key the selected live account is using. Read only; it exists so the
+  // edit view can say which one, not so it can be swapped there.
+  useEffect(() => {
+    if (!live || !account?.id) { setLiveCred(null); return }
+    let alive = true
+    fetchDeltaCredentials(account.id)
+      .then((row) => alive && setLiveCred(row))
+      .catch(() => alive && setLiveCred(null))
+    return () => { alive = false }
+  }, [live, account?.id])
+
+  async function verifyConnection(a) {
+    try {
+      await verifyDeltaCredentials(a.id)
+      toast('Checking the connection…', 'info')
+    } catch (e) {
+      toast(e.message ?? String(e), 'err')
+    }
+  }
   const verified = check?.status === 'ok'
 
   // Typing again invalidates a verdict reached on different credentials.
@@ -195,10 +232,13 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
         const row = await fetchDeltaCheck(id)
         if (row && (row.status === 'ok' || row.status === 'failed')) {
           setCheck({ ...row, id })
+          if (row.status === 'ok') toast('Credentials verified with Delta', 'ok')
           if (row.status === 'failed') {
-            setErr(row.seen_ip
+            const why = row.seen_ip
               ? `${row.message} — Delta saw this coming from ${row.seen_ip}`
-              : row.message)
+              : row.message
+          setErr(why)
+          toast(why, 'err')
           }
           return
         }
@@ -237,7 +277,11 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
         // rather than showing "unverified" while it checks the same key again.
         if (check?.id) await adoptDeltaCheck(made.id, check.id)
       }
-      if (made) onSelect(made.id)
+      if (made) {
+        toast(live ? `${made.name} created and connected to Delta`
+                   : `${made.name} created`, 'ok')
+        onSelect(made.id)
+      }
       setCreating(false)
       setNewName('')
       setNewBalance(String(DEFAULT_BALANCE))
@@ -299,6 +343,15 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                         is not: on a live account the money is Delta's figure,
                         and typing over it would only make this screen disagree
                         with the exchange until the next sync. */}
+                    {live && (
+                      <div className={`${fieldCls} flex items-center justify-between
+                                       text-slate-500`}>
+                        <span className="nums">
+                          {liveCred ? `API key ····${liveCred.key_last4}` : 'No API key'}
+                        </span>
+                        <span className="text-[10px]">not editable</span>
+                      </div>
+                    )}
                     {live ? (
                       <div className={`${fieldCls} flex items-center justify-between
                                        text-slate-500`}>
@@ -386,6 +439,15 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                                     onClick={() => startEdit(a)}>
                           <PencilIcon />
                         </IconButton>
+                        {/* Rechecking is the one live-account action worth a
+                            button of its own: keys get revoked and allowlists
+                            get edited, and nothing tells you until you ask. */}
+                        {live && (
+                          <IconButton title="Verify connection"
+                                      onClick={() => verifyConnection(a)}>
+                            <PlugIcon />
+                          </IconButton>
+                        )}
                         {/* Resetting restores a starting balance this side
                             never had. Only Delta can change a live balance. */}
                         {!live && (

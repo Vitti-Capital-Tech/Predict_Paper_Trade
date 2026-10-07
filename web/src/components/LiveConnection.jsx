@@ -1,21 +1,21 @@
-import { useCallback, useEffect, useState } from 'react'
-import {
-  fetchDeltaCredentials, verifyDeltaCredentials, saveDeltaCredentials,
-} from '../lib/supabase'
-import { Labelled, Secret } from './Fields'
-
-const DELTA_GLOBAL = 'https://api.delta.exchange'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { fetchDeltaCredentials } from '../lib/supabase'
+import { useToast } from './Toasts'
 
 /**
- * Whether a live account can actually reach Delta.
+ * Whether a live account can actually reach Delta, and what it holds.
  *
- * The check is not made here. Delta authorises by IP and the whitelisted
- * address is the worker's, not this browser's, so a check from this page would
- * fail on credentials that are perfectly good - and teach you to distrust a
- * working setup. Pressing the button marks the credentials unverified; the
- * worker notices within a few seconds, calls the cheapest authenticated
- * endpoint there is, and writes back what happened.
+ * The check itself is not made here, and not by the browser at all. Delta
+ * authorises by IP and the whitelisted address is the worker's, not this
+ * page's, so a check from here would fail on credentials that are perfectly
+ * good - and teach you to distrust a working setup. The switcher's button
+ * marks the credentials unverified; the worker notices within a few seconds,
+ * calls the cheapest authenticated endpoint there is, and writes back what
+ * happened. This watches for that answer.
  */
+
+const money = (v) => `$${Number(v ?? 0).toLocaleString('en-US',
+  { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 const LOOK = {
   verified:   { dot: 'bg-emerald-400', text: 'text-emerald-300', label: 'Connected' },
@@ -28,40 +28,50 @@ const LOOK = {
 export default function LiveConnection({ account, workerLive }) {
   const [cred, setCred] = useState(null)
   const [missing, setMissing] = useState(false)
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  // Keys get rotated, and an account can end up without them if saving failed
-  // after it was created - so attaching them later has to be possible here,
-  // not only in the form that makes the account.
-  const [entering, setEntering] = useState(false)
-  const [key, setKey] = useState('')
-  const [secret, setSecret] = useState('')
-  const [showKey, setShowKey] = useState(false)
-  const [showSecret, setShowSecret] = useState(false)
+  const toast = useToast()
 
   const accountId = account?.id ?? null
+  // What the status was last time, so a verdict is announced once - when it
+  // arrives - rather than on every poll that sees the same answer.
+  const was = useRef(null)
 
   const load = useCallback(() => {
     if (!accountId) return
     fetchDeltaCredentials(accountId)
       .then((row) => { setCred(row); setMissing(false) })
       .catch((e) => {
-        // Before migration 023 the function does not exist. Say which one.
         if (/function|does not exist|PGRST202|schema cache/i.test(`${e?.message ?? e}`)) {
           setMissing(true)
         } else setError(e.message ?? String(e))
       })
   }, [accountId])
 
-  useEffect(() => { setCred(null); setError(null); load() }, [load])
+  useEffect(() => { setCred(null); setError(null); was.current = null; load() }, [load])
 
-  // Only poll while an answer is actually coming, rather than forever.
-  const pending = cred?.status === 'unverified' || cred?.status === 'verifying'
+  const status = cred ? cred.status : 'none'
+  const pending = status === 'unverified' || status === 'verifying'
+
+  // Polled even when settled, not only while an answer is due. A recheck is
+  // started from the switcher, so this panel has no way of knowing one is
+  // under way - and gating the poll on `pending` meant a verified account
+  // never noticed it had gone back to being checked. Faster while waiting.
   useEffect(() => {
-    if (!pending) return
-    const t = setInterval(load, 2000)
+    if (!accountId) return
+    const t = setInterval(load, pending ? 1500 : 4000)
     return () => clearInterval(t)
-  }, [pending, load])
+  }, [pending, load, accountId])
+
+  // Announce the verdict as it lands. The dot alone is easy to miss on a
+  // screen you are not watching when the worker finally answers.
+  useEffect(() => {
+    const prev = was.current
+    was.current = status
+    if (prev === null || prev === status) return
+    if (!(prev === 'unverified' || prev === 'verifying')) return
+    if (status === 'verified') toast('Connected to Delta', 'ok')
+    if (status === 'invalid') toast(cred?.last_error || 'Could not connect to Delta', 'err')
+  }, [status, cred?.last_error, toast])
 
   if (!accountId) return null
 
@@ -79,41 +89,7 @@ export default function LiveConnection({ account, workerLive }) {
     )
   }
 
-  const status = cred ? cred.status : 'none'
   const look = LOOK[status] ?? LOOK.none
-
-  const verify = async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      await verifyDeltaCredentials(accountId)
-      setCred((c) => (c ? { ...c, status: 'unverified', last_error: null } : c))
-    } catch (e) {
-      setError(e.message ?? String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const saveCreds = async () => {
-    if (!key.trim() || !secret.trim()) {
-      setError('API key and secret are both required')
-      return
-    }
-    setBusy(true)
-    setError(null)
-    try {
-      await saveDeltaCredentials(accountId, key.trim(), secret.trim(), DELTA_GLOBAL)
-      setKey(''); setSecret(''); setEntering(false)
-      setShowKey(false); setShowSecret(false)
-      // Saving marks them unverified; the worker picks that up on its own.
-      load()
-    } catch (e) {
-      setError(e.message ?? String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
 
   return (
     <Shell>
@@ -122,41 +98,34 @@ export default function LiveConnection({ account, workerLive }) {
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${look.dot}`} />
           <div>
             <p className={`text-xs font-semibold ${look.text}`}>{look.label}</p>
-            <p className="nums mt-0.5 text-[11px] text-slate-500">
-              {cred
-                ? <>key ····{cred.key_last4} · {entityName(cred.base_url)}</>
-                : 'Add an API key and secret to this account to connect it.'}
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              {cred ? entityName(cred.base_url)
+                    : 'Add an account with an API key to connect it.'}
             </p>
           </div>
         </div>
 
-        {!entering && (
-          <button
-            onClick={() => { setEntering(true); setError(null) }}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-400
-                       transition-colors hover:border-white/25 hover:text-slate-200"
-          >
-            {cred ? 'Replace key' : 'Add credentials'}
-          </button>
-        )}
-
+        {/* The balance Delta reported. It is the number that says the
+            connection is not merely open but reading the right account. */}
         {cred && (
-          <button
-            onClick={verify}
-            disabled={busy || pending}
-            title={workerLive
-              ? 'The worker will check these credentials against Delta'
-              : 'No worker is running, so nothing will pick this up'}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300
-                       transition-colors hover:border-white/25 disabled:opacity-40"
-          >
-            {pending ? 'Checking…' : 'Verify connection'}
-          </button>
+          <div className="text-right">
+            <p className="text-[10px] uppercase tracking-wide text-slate-500">Balance</p>
+            <p className="nums text-sm font-semibold text-slate-100">
+              {money(account?.balance)}
+            </p>
+          </div>
         )}
       </div>
 
-      {/* Pending with nothing running is the one case the dot cannot explain:
-          it will sit there indefinitely rather than failing. */}
+      {/* Nothing else on screen moves while the worker is being waited on, and
+          the wait runs to several seconds - long enough to read as nothing
+          having happened at all. */}
+      {pending && (
+        <div className="mt-2.5 h-0.5 w-full overflow-hidden rounded bg-white/5">
+          <div className="indeterminate h-full w-1/3 rounded bg-sky-400/70" />
+        </div>
+      )}
+
       {pending && !workerLive && (
         <p className="mt-2 text-[11px] text-amber-400">
           No worker is running, so this check will not be picked up.
@@ -176,32 +145,6 @@ export default function LiveConnection({ account, workerLive }) {
         </div>
       )}
 
-      {entering && (
-        <div className="mt-3 space-y-1.5 border-t border-white/5 pt-3">
-          <Labelled label="API Key">
-            <Secret value={key} onChange={(e) => setKey(e.target.value)}
-                    show={showKey} onToggle={() => setShowKey((v) => !v)}
-                    cls={FIELD} name="live-key" />
-          </Labelled>
-          <Labelled label="API Secret">
-            <Secret value={secret} onChange={(e) => setSecret(e.target.value)}
-                    show={showSecret} onToggle={() => setShowSecret((v) => !v)}
-                    cls={FIELD} name="live-secret" />
-          </Labelled>
-          <div className="flex justify-end gap-1.5 pt-0.5">
-            <button onClick={() => { setEntering(false); setKey(''); setSecret('') }}
-                    className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-300">
-              Cancel
-            </button>
-            <button onClick={saveCreds} disabled={busy}
-                    className="rounded-md bg-sky-500 px-2.5 py-1 text-[11px] font-semibold
-                               text-white hover:bg-sky-400 disabled:opacity-50">
-              {busy ? 'Saving…' : 'Save and check'}
-            </button>
-          </div>
-        </div>
-      )}
-
       {error && <p className="mt-2 text-[11px] text-rose-300">{error}</p>}
 
       <p className="mt-2.5 border-t border-white/5 pt-2 text-[10px] leading-relaxed text-slate-500">
@@ -212,9 +155,6 @@ export default function LiveConnection({ account, workerLive }) {
     </Shell>
   )
 }
-
-const FIELD = `nums w-full rounded-md border border-white/10 bg-ink-800 px-2 py-1
-                text-xs text-slate-100 outline-none focus:border-sky-500/50`
 
 function Shell({ children }) {
   return (
