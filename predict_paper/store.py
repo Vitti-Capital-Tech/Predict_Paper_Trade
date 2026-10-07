@@ -485,6 +485,21 @@ class SupabaseStore:
             self._post("rpc/adjust_account_balance",
                        {"p_account_id": int(account_id), "p_delta": float(delta)})
 
+    def set_account_balance(self, account_id: int, balance: float) -> None:
+        """Set a live account's balance outright.
+
+        Not `adjust_account_balance`: that moves a paper balance by a delta
+        this side computed. A live balance is not computed here at all - it is
+        whatever the exchange says, including funding, fees and settlements
+        that happened without this worker's involvement. Overwriting is the
+        point.
+        """
+        if not account_id:
+            return
+        with self._lock:
+            self._patch("accounts", {"balance": float(balance)},
+                        {"id": "eq.%d" % int(account_id)})
+
     def finish_run(self, cash: float, status: str = "stopped") -> None:
         if self.run_id is None:
             return

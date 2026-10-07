@@ -17,7 +17,7 @@ from .fills import FillEngine
 from .indicators import AtrGate
 from .portfolio import Portfolio, Position
 from .rounds import Contract, Round, build_rounds
-from .delta_auth import check_connection
+from .delta_auth import DeltaAuthClient, SETTLEMENT_ASSETS, check_connection
 from .live import LiveExecutor, dry_run
 from .store import build_store
 from .strategy import Strategy
@@ -104,6 +104,11 @@ WINGS = ("wing_low", "wing_high")
 # With partial entry on, stop topping a leg up once it is this close to its
 # target. The last few dollars buy a handful of contracts and cost a crossed
 # spread to get, so chasing them writes a fill every tick for no real exposure.
+# How often a live account's balance is re-read from the exchange. Often
+# enough to be current on a screen, rare enough not to spend the rate limit
+# on a number that changes only when something settles.
+LIVE_BALANCE_SEC = 30.0
+
 TOPUP_FLOOR_FRAC = 0.10
 
 
@@ -160,7 +165,13 @@ class Engine:
         # Live accounts already reported as skipped, so the line is logged once
         # rather than on every config refresh.
         self._skipped_live: set = set()
+        self._balance_warned: set = set()
         self._creds_at: float = 0.0
+        self._balance_at: float = 0.0
+        # Authenticated clients for live accounts, kept whether or not the
+        # account is armed: the balance is worth showing even when nothing is
+        # being sent.
+        self._live_clients: Dict[int, Any] = {}
         self._products: List[Dict] = []
         self._products_at: float = 0.0
         self._seen_rounds: set = set()
@@ -951,6 +962,7 @@ class Engine:
         # Settings first, so everything below runs under the current rules.
         self.refresh_remote_config(now_ts)
         self.verify_pending_credentials(now_ts)
+        self.sync_live_balances(now_ts)
         self.maybe_adopt(now_ts)
 
         tickers = self.client.binary_tickers()
@@ -1075,6 +1087,67 @@ class Engine:
             log.info("CREDS  account %s %s - %s", aid,
                      "verified" if res.ok else "REJECTED", res.message)
 
+    def sync_live_balances(self, now_ts: float) -> None:
+        """Keep a live account's balance equal to the exchange's figure.
+
+        It used to move only when someone pressed Verify, so between presses
+        the dashboard showed a number that had stopped being true the moment
+        anything settled - and after a fill it was wrong in both directions
+        at once, because this side debits a cost that Delta has already taken.
+
+        A live balance is not ours to compute. It is read and written as-is,
+        including funding, fees and settlements that happened with no
+        involvement from this worker.
+
+        Runs for every live account with usable credentials, armed or not: the
+        figure is worth showing either way.
+        """
+        if (now_ts - self._balance_at) < LIVE_BALANCE_SEC:
+            return
+        self._balance_at = now_ts
+
+        for row in (self.store.accounts() or []):
+            if (row.get("mode") or "paper") == "paper":
+                continue
+            aid = row.get("id")
+            if aid is None:
+                continue
+
+            client = self._live_clients.get(aid)
+            if client is None:
+                creds = self.store.credentials_decrypted(aid)
+                if not creds or not creds.get("api_secret"):
+                    continue
+                client = DeltaAuthClient(creds.get("api_key") or "",
+                                         creds.get("api_secret") or "",
+                                         creds.get("base_url") or "")
+                self._live_clients[aid] = client
+
+            try:
+                wallets = client.wallet_balances() or []
+            except Exception as exc:  # noqa: BLE001
+                # A balance that could not be read is not a balance of zero.
+                # Leave the last figure known to be real and say so once.
+                if aid not in self._balance_warned:
+                    self._balance_warned.add(aid)
+                    log.warning("LIVE   %s balance read failed: %s",
+                                row.get("name") or aid, exc)
+                continue
+            self._balance_warned.discard(aid)
+
+            total = sum(
+                _num(w.get("available_balance") or w.get("balance"))
+                for w in wallets if isinstance(w, dict)
+                and str(w.get("asset_symbol")
+                        or (w.get("asset") or {}).get("symbol") or "").upper()
+                in SETTLEMENT_ASSETS)
+
+            if abs(total - _num(row.get("balance"))) > 0.005:
+                self.store.set_account_balance(aid, total)
+                acct = self.accounts.get(aid)
+                if acct is not None:
+                    acct.balance = total
+
     # ---- dashboard feed -------------------------------------------------
     def _leg_payload(self, leg: Optional[Contract], max_price: float) -> Optional[Dict]:
         if leg is None:
@@ -1158,3 +1231,10 @@ class Engine:
                 self.store.finish_run(self.portfolio.cash)
             except Exception as exc:  # noqa: BLE001
                 log.debug("finish_run failed: %s", exc)
+
+
+def _num(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
