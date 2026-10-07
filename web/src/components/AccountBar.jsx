@@ -40,7 +40,7 @@ function IconButton({ title, onClick, tone = 'slate', children }) {
 }
 
 export default function AccountBar({ account, accounts, onSelect, onAccountsChanged,
-                                     unavailable }) {
+                                     unavailable, mode = 'paper' }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
@@ -142,7 +142,9 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
     const name = newName.trim() || `Account ${accounts.length + 1}`
     if (!Number.isFinite(value) || value < 0) return
     await run(async () => {
-      const made = await createAccount(name, value)
+      // Created on whichever side the switcher is showing, so a live account
+      // cannot be made by accident from the paper tab.
+      const made = await createAccount(name, value, mode)
       if (made) onSelect(made.id)
       setCreating(false)
       setNewName('')

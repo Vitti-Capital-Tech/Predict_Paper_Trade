@@ -288,10 +288,16 @@ class SupabaseStore:
             return None
 
     def accounts(self) -> Optional[List[Dict[str, Any]]]:
-        """Paper accounts, for the balance each strategy is spending."""
+        """Accounts, for the balance each strategy is spending and its mode.
+
+        `select=*` rather than naming columns: `mode` arrives with migration
+        022, and asking for a column the table does not have yet is a 400 that
+        would take every account down with it - including the paper ones that
+        were trading perfectly well before.
+        """
         try:
             r = self.session.get("%s/accounts" % self.base, timeout=self.timeout,
-                                 params={"select": "id,name,balance", "limit": "200"})
+                                 params={"select": "*", "limit": "200"})
             if r.status_code >= 400:
                 self._note_failure("accounts -> %s" % r.status_code)
                 return None

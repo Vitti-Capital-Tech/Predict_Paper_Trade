@@ -151,6 +151,9 @@ class Engine:
             self.client, cfg.atr.candle_symbol, cfg.atr.resolution,
             cfg.atr.period, cfg.atr.min_atr, cfg.atr.refresh_sec, cfg.atr.enabled)
 
+        # Live accounts already reported as skipped, so the line is logged once
+        # rather than on every config refresh.
+        self._skipped_live: set = set()
         self._products: List[Dict] = []
         self._products_at: float = 0.0
         self._seen_rounds: set = set()
@@ -193,6 +196,23 @@ class Engine:
             aid = row.get("account_id")
             if aid is None:
                 continue
+
+            # This worker fills against a simulated book. A live account must
+            # not quietly get paper fills that look like real ones, so it is
+            # dropped here rather than traded as though the distinction did
+            # not exist. Live execution is a separate path and does not exist
+            # yet. Accounts predating migration 022 have no mode and are
+            # paper, which is what they have always been.
+            mode = (balances.get(aid) or {}).get("mode") or "paper"
+            if mode != "paper":
+                if aid not in self._skipped_live:
+                    self._skipped_live.add(aid)
+                    log.info("SKIP   account %s is %s - this worker only paper trades",
+                             (balances.get(aid) or {}).get("name") or aid, mode)
+                self.accounts.pop(aid, None)
+                continue
+            self._skipped_live.discard(aid)
+
             seen.add(aid)
 
             acct = self.accounts.get(aid)

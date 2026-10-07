@@ -29,11 +29,19 @@ VITE_SUPABASE_ANON_KEY=eyJhbGci...`}
   )
 }
 
+// Remembered per mode: switching to Live and back should land on the paper
+// account you were last on, not reset to the first one.
 const LAST_ACCOUNT_KEY = 'predict.accountId'
+const MODE_KEY = 'predict.mode'
+const modeOf = (a) => a?.mode ?? 'paper'
 
 export default function App() {
   const [accounts, setAccounts] = useState([])
   const [accountId, setAccountId] = useState(null)
+  const [mode, setMode] = useState(() => {
+    try { return localStorage.getItem(MODE_KEY) === 'live' ? 'live' : 'paper' }
+    catch { return 'paper' }
+  })
   const [accountsUnavailable, setAccountsUnavailable] = useState(false)
   // Shared with the portfolio, so closing a position honours the same
   // tolerance the ticket was set to rather than a second hidden default.
@@ -59,11 +67,15 @@ export default function App() {
       const rows = await fetchAccounts()
       setAccounts(rows)
       setAccountsUnavailable(false)
+      // Only the accounts on the side currently being shown are selectable;
+      // holding a live account while the paper tab is open would leave the
+      // panels below describing something that is not on screen.
+      const here = rows.filter((r) => modeOf(r) === mode)
       setAccountId((prev) => {
-        if (prev && rows.some((r) => r.id === prev)) return prev
-        const stored = Number(localStorage.getItem(LAST_ACCOUNT_KEY))
-        if (stored && rows.some((r) => r.id === stored)) return stored
-        return rows[0]?.id ?? null
+        if (prev && here.some((r) => r.id === prev)) return prev
+        const stored = Number(localStorage.getItem(`${LAST_ACCOUNT_KEY}.${mode}`))
+        if (stored && here.some((r) => r.id === stored)) return stored
+        return here[0]?.id ?? null
       })
     } catch (e) {
       const msg = `${e?.message ?? e}`
@@ -71,7 +83,7 @@ export default function App() {
         setAccountsUnavailable(true)
       }
     }
-  }, [])
+  }, [mode])
 
   useEffect(() => { loadAccounts() }, [loadAccounts])
 
@@ -97,9 +109,11 @@ export default function App() {
 
   useEffect(() => {
     if (accountId) {
-      try { localStorage.setItem(LAST_ACCOUNT_KEY, String(accountId)) } catch { /* private mode */ }
+      try {
+        localStorage.setItem(`${LAST_ACCOUNT_KEY}.${mode}`, String(accountId))
+      } catch { /* private mode */ }
     }
-  }, [accountId])
+  }, [accountId, mode])
 
   // Worker liveness, kept only so a stuck order can explain itself.
   useEffect(() => {
@@ -114,7 +128,16 @@ export default function App() {
 
   if (!isConfigured) return <Setup />
 
-  const account = accounts.find((a) => a.id === accountId) ?? null
+  const visible = accounts.filter((a) => modeOf(a) === mode)
+  const account = visible.find((a) => a.id === accountId) ?? null
+  const isLive = mode === 'live'
+
+  const switchMode = (next) => {
+    if (next === mode) return
+    try { localStorage.setItem(MODE_KEY, next) } catch { /* private mode */ }
+    setAccountId(null)
+    setMode(next)
+  }
   const workerAgeSec = workerSeenAt
     ? (Date.now() - new Date(workerSeenAt).getTime()) / 1000
     : null
@@ -124,9 +147,36 @@ export default function App() {
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-white/5 bg-ink-950/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-2.5">
-            <Logo className="h-7 w-7" />
-            <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2.5">
+              <Logo className="h-7 w-7" />
+              <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>
+            </div>
+
+            {/* Paper and live are different money, so they are a switch
+                between two sets of accounts rather than a filter inside one
+                list. Live is red because the cost of mistaking which one you
+                are on is not symmetric. */}
+            <div role="tablist" aria-label="Account mode"
+                 className="flex rounded-lg border border-white/10 bg-ink-900 p-0.5">
+              {[['paper', 'Paper'], ['live', 'Live']].map(([key, label]) => {
+                const on = mode === key
+                return (
+                  <button
+                    key={key} role="tab" aria-selected={on}
+                    onClick={() => switchMode(key)}
+                    className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${
+                      on
+                        ? key === 'live'
+                          ? 'bg-rose-500/20 text-rose-300'
+                          : 'bg-sky-500/20 text-sky-300'
+                        : 'text-slate-500 hover:text-slate-300'}`}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
           {/* Grouped right: justify-between would otherwise strand the
@@ -152,7 +202,8 @@ export default function App() {
 
           <AccountBar
             account={account}
-            accounts={accounts}
+            accounts={visible}
+            mode={mode}
             unavailable={accountsUnavailable}
             onSelect={setAccountId}
             onAccountsChanged={loadAccounts}
@@ -162,10 +213,28 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:py-6">
+        {/* Said plainly, because the dangerous version of this screen is the
+            one that looks live and is not - or looks paper and is not. The
+            worker refuses live accounts outright today; it fills against a
+            simulated book and nothing it does reaches the exchange. */}
+        {isLive && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
+            <p className="text-xs font-semibold text-rose-300">
+              Live accounts are not trading yet
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-rose-200/80">
+              Nothing here reaches Delta. The worker only paper trades and skips
+              these accounts entirely, so a strategy armed on this side opens
+              nothing — on the exchange or on paper. Real execution needs the
+              whitelisted IP, credentials held on the worker, and the kill
+              switch turned on.
+            </p>
+          </div>
+        )}
         {/* Filters and the automation switch sit above the ticket: they
             govern what the bot does with every round, so they belong where
             they are read first rather than under the thing they control. */}
-        <StrategyPanel account={account} accounts={accounts} workerLive={workerLive}
+        <StrategyPanel account={account} accounts={visible} workerLive={workerLive}
                        onSlippageChange={setSlippage}
                        onUnderlyingChange={setBotAsset}
                        onAtrChange={setAtrInfo} />

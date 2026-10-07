@@ -78,10 +78,14 @@ export async function fetchAccounts() {
   return data ?? []
 }
 
-export async function createAccount(name, startingBalance) {
+export async function createAccount(name, startingBalance, mode = 'paper') {
+  const row = { name, starting_balance: startingBalance, balance: startingBalance }
+  // Only sent when it is not the default, so creating a paper account still
+  // works against a database where migration 022 has not been run yet.
+  if (mode !== 'paper') row.mode = mode
   const { data, error } = await supabase
     .from('accounts')
-    .insert({ name, starting_balance: startingBalance, balance: startingBalance })
+    .insert(row)
     .select()
   if (error) throw error
   return data?.[0] ?? null
