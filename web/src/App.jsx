@@ -218,7 +218,7 @@ export default function App() {
         {/* Filters and the automation switch sit above the ticket: they
             govern what the bot does with every round, so they belong where
             they are read first rather than under the thing they control. */}
-        <StrategyPanel account={account} accounts={visible} workerLive={workerLive}
+        <StrategyPanel account={account} accounts={accounts} workerLive={workerLive}
                        onSlippageChange={setSlippage}
                        onUnderlyingChange={setBotAsset}
                        onAtrChange={setAtrInfo} />

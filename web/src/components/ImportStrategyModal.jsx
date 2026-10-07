@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 
 /**
- * Take another account's filters.
+ * Copy another account's filters into this one.
  *
- * Pull rather than push: you set up one account, then bring those rules into
- * the one you are looking at. The account being changed is the one on screen,
- * which is the one whose Save button and Revert are right there if the result
- * is not what you wanted.
+ * Pull rather than push: the account being changed is the one on screen,
+ * which is the one whose Save and Revert are right there if the result is not
+ * what you wanted.
+ *
+ * Both sides are offered, deliberately. A strategy is tuned on paper and then
+ * wanted on live - that is the whole point of having the two - so a list
+ * confined to the side you are on would leave out the only account you had
+ * actually tested. Each row says which side it is from.
  *
  * Nothing is written here. The settings land in the form as unsaved changes,
  * so they can be read, adjusted and saved - or reverted - like any other edit.
@@ -90,7 +94,7 @@ export default function ImportStrategyModal({
         <header className="flex items-start justify-between gap-3 border-b border-white/10 px-5 py-3.5">
           <div>
             <h2 id="import-title" className="text-sm font-semibold text-slate-100">
-              Import filters
+              Copy filters
             </h2>
             <p className="mt-0.5 text-[11px] text-slate-500">
               into <span className="text-slate-300">{account?.name ?? 'this account'}</span>
@@ -130,6 +134,13 @@ export default function ImportStrategyModal({
               >
                 <span className="min-w-0 flex-1 truncate text-xs text-slate-200">
                   {a.name}
+                </span>
+                {/* Which side it is from, so a live account's rules are not
+                    taken for a paper account's by mistake, or the reverse. */}
+                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
+                  (a.mode ?? 'paper') === 'live'
+                    ? 'bg-rose-500/15 text-rose-300' : 'bg-white/5 text-slate-500'}`}>
+                  {(a.mode ?? 'paper') === 'live' ? 'LIVE' : 'PAPER'}
                 </span>
                 <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${
                   differs ? 'bg-amber-500/15 text-amber-400' : 'bg-white/5 text-slate-500'}`}>

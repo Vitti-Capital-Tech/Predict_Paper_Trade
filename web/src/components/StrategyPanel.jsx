@@ -433,7 +433,7 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
             disabled={busy || accounts.length < 2}
             title={accounts.length < 2
               ? 'There is only one account'
-              : "Bring another account's filters into this one"}
+              : "Copy another account's filters into this one"}
             className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5
                        text-xs text-slate-300 transition-colors hover:border-white/25
                        disabled:opacity-40 disabled:hover:border-white/10"
@@ -444,7 +444,7 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
               <path d="M2.8 11v1.2A1.5 1.5 0 0 0 4.3 13.7h7.4a1.5 1.5 0 0 0 1.5-1.5V11"
                     stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
             </svg>
-            Import
+            Copy
           </button>
 
           <button
@@ -849,8 +849,8 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
           setDraft((d) => ({ ...d, ...patch }))
           setOpen(true)
           toast(cross
-            ? `Filters from ${from} imported — ATR and point settings kept`
-            : `Filters from ${from} imported — review and Save`, 'ok')
+            ? `Copied from ${from} — ATR and point settings kept`
+            : `Copied from ${from} — review and Save`, 'ok')
         }}
       />
     </div>
