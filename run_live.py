@@ -14,6 +14,7 @@ import os
 import sys
 
 from predict_paper.config import Config
+from predict_paper.delta_auth import force_ipv4
 from predict_paper.engine import Engine
 from predict_paper.report import format_summary, load_trades, summarise
 
@@ -85,6 +86,12 @@ def main() -> int:
         print(format_summary(summarise(load_trades(trades_path),
                                        cfg.portfolio.starting_cash)))
         return 0
+
+    # Before anything connects. Delta authorises by IP and this host would
+    # otherwise reach it over IPv6, which is not the address on the allowlist.
+    # PREDICT_FORCE_IPV4=0 turns it off for a host where v4 is not an option.
+    if os.environ.get("PREDICT_FORCE_IPV4", "1") != "0":
+        force_ipv4()
 
     engine = Engine(cfg)
     if args.dry_run:

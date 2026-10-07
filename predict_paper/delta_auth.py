@@ -40,6 +40,29 @@ READ_TIMEOUT = 6.0
 WRITE_TIMEOUT = 15.0
 
 
+def force_ipv4() -> None:
+    """Make outbound HTTP use IPv4, so Delta sees the address we whitelisted.
+
+    `api.delta.exchange` publishes AAAA records and this host has an IPv6
+    route, so connections went out over v6 and Delta saw
+    2406:da1a:... instead of the elastic IPv4 on the allowlist - rejected as
+    `ip_not_whitelisted_for_api_key`, which reads like a credentials problem
+    rather than a routing one.
+
+    Whitelisting the v6 address instead is not the fix: it is DHCPv6-leased
+    with a 400-second lifetime, so an allowlist built on it is one renewal
+    away from breaking.
+
+    This changes the whole process, which is intended. The only hosts it talks
+    to are Delta and Supabase, both reachable over IPv4, and one predictable
+    egress address is worth more here than dual-stack.
+    """
+    import socket
+    import urllib3.util.connection as urllib3_conn
+
+    urllib3_conn.allowed_gai_family = lambda: socket.AF_INET
+
+
 class DeltaAuthError(RuntimeError):
     """A rejected signed call, with whatever Delta said about why."""
 
