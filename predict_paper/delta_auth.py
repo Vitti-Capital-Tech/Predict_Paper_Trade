@@ -20,7 +20,7 @@ import hmac
 import json
 import logging
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, NamedTuple, Optional, Tuple
 
 import requests
 
@@ -127,33 +127,57 @@ class DeltaAuthClient:
         return self._request("GET", "/v2/wallet/balances")
 
 
-def check_connection(api_key: str, api_secret: str, base_url: str = GLOBAL
-                     ) -> Tuple[bool, str, str]:
-    """Verify one set of credentials.
+class CheckResult(NamedTuple):
+    ok: bool
+    message: str
+    seen_ip: str
+    # Settlement-currency balance, which is what a Predict position is sized
+    # in. None when the call failed, or when Delta reported no such wallet -
+    # those are different from a genuine zero and the caller should not round
+    # them together.
+    balance: Optional[float]
 
-    Returns (ok, message, seen_ip). Never raises: the caller is storing the
-    answer against an account, and a failure to connect is itself the answer.
+
+# Predict settles in USD. Delta reports a wallet per asset, so the figure that
+# matters is the one in the settlement currency - a BTC wallet is not spending
+# money for this purpose. USDT is accepted as the same thing because Delta
+# reports the margin wallet under either name depending on the account.
+SETTLEMENT_ASSETS = ("USD", "USDT", "USDC")
+
+
+def _asset_of(row: Dict[str, Any]) -> str:
+    return str(row.get("asset_symbol")
+               or (row.get("asset") or {}).get("symbol") or "").upper()
+
+
+def check_connection(api_key: str, api_secret: str, base_url: str = GLOBAL
+                     ) -> CheckResult:
+    """Verify one set of credentials and report what the account holds.
+
+    Never raises: the caller is storing the answer, and a failure to connect is
+    itself the answer rather than an exception to handle.
     """
     client = DeltaAuthClient(api_key, api_secret, base_url)
     try:
         result = client.wallet_balances()
     except DeltaAuthError as exc:
-        return False, str(exc), exc.seen_ip
+        return CheckResult(False, str(exc), exc.seen_ip, None)
     except Exception as exc:  # noqa: BLE001
-        return False, str(exc), ""
+        return CheckResult(False, str(exc), "", None)
 
-    rows = result if isinstance(result, list) else []
-    funded = [r for r in rows
-              if _f(r.get("available_balance")) or _f(r.get("balance"))]
-    if not rows:
-        return True, "connected; no wallet balances returned", ""
-    if not funded:
-        return True, "connected; all wallets are empty", ""
-    summary = ", ".join(
-        "%s %s" % (_fmt(r.get("available_balance") or r.get("balance")),
-                   (r.get("asset_symbol") or (r.get("asset") or {}).get("symbol") or "?"))
-        for r in funded[:3])
-    return True, "connected; %s" % summary, ""
+    rows = [r for r in (result or []) if isinstance(r, dict)]
+    settlement = [r for r in rows if _asset_of(r) in SETTLEMENT_ASSETS]
+    if not settlement:
+        held = ", ".join(sorted({_asset_of(r) for r in rows if _asset_of(r)})) or "none"
+        return CheckResult(
+            True, "connected, but no USD wallet on this account (holds: %s)" % held,
+            "", None)
+
+    # available_balance is what can actually be committed; `balance` includes
+    # margin already pledged to open positions.
+    total = sum(_f(r.get("available_balance") or r.get("balance"))
+                for r in settlement)
+    return CheckResult(True, "connected; %s USD available" % _fmt(total), "", total)
 
 
 def _f(v: Any) -> float:

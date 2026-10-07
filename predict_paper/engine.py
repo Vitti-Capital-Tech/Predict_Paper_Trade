@@ -962,6 +962,21 @@ class Engine:
             return
         self._creds_at = now_ts
 
+        # Checks staged by the create form, which has no account to hang
+        # credentials on yet.
+        for chk in self.store.claim_credential_checks():
+            cid = chk.get("id")
+            if not cid:
+                continue
+            res = check_connection(chk.get("api_key") or "",
+                                   chk.get("api_secret") or "",
+                                   chk.get("base_url") or "")
+            self.store.set_credential_check(
+                cid, "ok" if res.ok else "failed",
+                res.balance, res.message, res.seen_ip)
+            log.info("CHECK  staged credentials %s - %s",
+                     "ok" if res.ok else "REJECTED", res.message)
+
         for row in self.store.credentials_awaiting_check():
             aid = row.get("account_id")
             if aid is None:
@@ -973,14 +988,14 @@ class Engine:
                     aid, "invalid", "credentials could not be read back")
                 continue
 
-            ok, msg, seen_ip = check_connection(
+            res = check_connection(
                 creds.get("api_key") or "", creds.get("api_secret") or "",
                 creds.get("base_url") or "")
             self.store.set_verification(
-                aid, "verified" if ok else "invalid",
-                "" if ok else msg, seen_ip)
+                aid, "verified" if res.ok else "invalid",
+                "" if res.ok else res.message, res.seen_ip)
             log.info("CREDS  account %s %s - %s", aid,
-                     "verified" if ok else "REJECTED", msg)
+                     "verified" if res.ok else "REJECTED", res.message)
 
     # ---- dashboard feed -------------------------------------------------
     def _leg_payload(self, leg: Optional[Contract], max_price: float) -> Optional[Dict]:

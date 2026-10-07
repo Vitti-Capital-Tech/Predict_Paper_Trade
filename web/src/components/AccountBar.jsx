@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   createAccount, updateAccount, deleteAccount, countOpenPositions,
-  saveDeltaCredentials,
+  saveDeltaCredentials, requestDeltaCheck, fetchDeltaCheck, adoptDeltaCheck,
 } from '../lib/supabase'
 import { PencilIcon, ResetIcon, TrashIcon } from './icons'
 
@@ -40,6 +40,59 @@ function IconButton({ title, onClick, tone = 'slate', children }) {
   )
 }
 
+/** A field with its name above it, so no box is left to be guessed at. */
+function Labelled({ label, children }) {
+  return (
+    <label className="block">
+      <span className="mb-0.5 block text-[10px] uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      {children}
+    </label>
+  )
+}
+
+/**
+ * A masked field with a reveal.
+ *
+ * Masked by default because these get entered with people watching and end up
+ * in screen shares. Revealable because they are long random strings, and a
+ * mistyped one is indistinguishable from a wrong one until the check fails.
+ */
+function Secret({ value, onChange, show, onToggle, cls, name }) {
+  return (
+    <div className="relative">
+      <input
+        type={show ? 'text' : 'password'}
+        value={value} onChange={onChange} name={name}
+        autoComplete="new-password" spellCheck="false"
+        className={`${cls} nums pr-8`}
+      />
+      <button
+        type="button" onClick={onToggle} tabIndex={-1}
+        aria-label={show ? 'Hide' : 'Show'}
+        title={show ? 'Hide' : 'Show'}
+        className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-1
+                   text-slate-500 transition-colors hover:text-slate-200"
+      >
+        {show ? (
+          <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5">
+            <path d="M2 2l12 12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+            <path d="M6.3 6.4a2 2 0 002.8 2.8M4.3 4.5C2.9 5.4 1.8 6.7 1.3 8c1 2.3 3.6 4 6.7 4 1.2 0 2.3-.3 3.3-.7M12.4 10c.9-.6 1.6-1.3 2.3-2-1-2.3-3.6-4-6.7-4-.5 0-1 .05-1.4.14"
+                  stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5">
+            <path d="M1.3 8C2.3 5.7 4.9 4 8 4s5.7 1.7 6.7 4c-1 2.3-3.6 4-6.7 4S2.3 10.3 1.3 8z"
+                  stroke="currentColor" strokeWidth="1.3" />
+            <circle cx="8" cy="8" r="1.9" stroke="currentColor" strokeWidth="1.3" />
+          </svg>
+        )}
+      </button>
+    </div>
+  )
+}
+
 export default function AccountBar({ account, accounts, onSelect, onAccountsChanged,
                                      unavailable, mode = 'paper' }) {
   const [open, setOpen] = useState(false)
@@ -63,6 +116,11 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   const [newSecret, setNewSecret] = useState('')
   // Not a choice: Predict's markets are listed on the global entity only.
   const DELTA_GLOBAL = 'https://api.delta.exchange'
+  const [showSecrets, setShowSecrets] = useState(false)
+  // A live account is not created until its credentials have been proven, so
+  // the form holds the verdict - and the balance Delta reported - until then.
+  const [check, setCheck] = useState(null)   // { id, status, balance, message, seen_ip }
+  const [checking, setChecking] = useState(false)
 
   const wrapRef = useRef(null)
 
@@ -145,17 +203,57 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   }
 
   const live = mode === 'live'
+  const verified = check?.status === 'ok'
+
+  // Typing again invalidates a verdict reached on different credentials.
+  const onCredChange = (setter) => (e) => {
+    setter(e.target.value)
+    if (check) setCheck(null)
+  }
+
+  async function verify() {
+    if (!newKey.trim() || !newSecret.trim()) {
+      setErr('API key and secret are both required')
+      return
+    }
+    setChecking(true)
+    setErr(null)
+    setCheck(null)
+    try {
+      const id = await requestDeltaCheck(newKey.trim(), newSecret.trim(), DELTA_GLOBAL)
+      // The worker answers within about ten seconds. Poll rather than wait on
+      // it, so a worker that is down shows as a timeout instead of a hang.
+      for (let i = 0; i < 20; i += 1) {
+        await new Promise((r) => setTimeout(r, 1500))
+        const row = await fetchDeltaCheck(id)
+        if (row && (row.status === 'ok' || row.status === 'failed')) {
+          setCheck({ ...row, id })
+          if (row.status === 'failed') {
+            setErr(row.seen_ip
+              ? `${row.message} — Delta saw this coming from ${row.seen_ip}`
+              : row.message)
+          }
+          return
+        }
+      }
+      setErr('No answer from the worker — is it running?')
+    } catch (e) {
+      setErr(e.message ?? String(e))
+    } finally {
+      setChecking(false)
+    }
+  }
 
   async function create() {
-    // A live account opens at zero and takes its balance from Delta; there is
-    // no paper money in it to start with.
-    const value = live ? 0 : Number(newBalance)
+    // A live account's balance is the one Delta just reported, not a number
+    // anybody typed.
+    const value = live ? Number(check?.balance ?? 0) : Number(newBalance)
     const name = newName.trim() || `Account ${accounts.length + 1}`
     if (!Number.isFinite(value) || value < 0) return
-    // A live account without credentials cannot do anything, and half-made is
-    // the worst state to leave one in - so both are required up front.
-    if (live && (!newKey.trim() || !newSecret.trim())) {
-      setErr('API key and secret are both required for a live account')
+    // Create is not offered until the check has passed, so this is a guard
+    // against a stale click rather than something a user should ever see.
+    if (live && !verified) {
+      setErr('Verify the connection first')
       return
     }
     await run(async () => {
@@ -168,6 +266,9 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
         // as "not connected" rather than pretending it is ready.
         await saveDeltaCredentials(made.id, newKey.trim(), newSecret.trim(),
                                    DELTA_GLOBAL)
+        // The worker already proved these moments ago; carry that verdict over
+        // rather than showing "unverified" while it checks the same key again.
+        if (check?.id) await adoptDeltaCheck(made.id, check.id)
       }
       if (made) onSelect(made.id)
       setCreating(false)
@@ -175,6 +276,8 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
       setNewBalance(String(DEFAULT_BALANCE))
       setNewKey('')
       setNewSecret('')
+      setCheck(null)
+      setShowSecrets(false)
       setOpen(false)
     })
   }
@@ -321,19 +424,22 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
           <div className="border-t border-white/5 p-1">
             {creating ? (
               <div className="space-y-1.5 p-2">
-                <input
-                  autoFocus value={newName} className={fieldCls}
-                  placeholder={`Account ${accounts.length + 1}`}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') create()
-                    if (e.key === 'Escape') setCreating(false)
-                  }}
-                />
+                <Labelled label="Account name">
+                  <input
+                    autoFocus value={newName} className={fieldCls}
+                    placeholder={`Account ${accounts.length + 1}`}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !live) create()
+                      if (e.key === 'Escape') setCreating(false)
+                    }}
+                  />
+                </Labelled>
                 {/* Paper only. A live account's money is whatever Delta
                     says it is - typing a number here would invent a second
                     balance that the exchange has never heard of. */}
                 {!live && (
+                  <Labelled label="Starting balance">
                   <div className="relative">
                     <span className="pointer-events-none absolute left-2 top-1/2
                                      -translate-y-1/2 text-xs text-slate-500">$</span>
@@ -348,32 +454,43 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                       }}
                     />
                   </div>
+                  </Labelled>
                 )}
                 {live && (
                   <>
-                    <input
-                      value={newKey} className={fieldCls} autoComplete="off"
-                      placeholder="API Key"
-                      onChange={(e) => setNewKey(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Escape') setCreating(false) }}
-                    />
-                    {/* type=password so a shoulder or a screen share does not
-                        read it; it is never displayed again after this. */}
-                    <input
-                      type="password" value={newSecret} className={fieldCls}
-                      autoComplete="new-password" placeholder="API Secret"
-                      onChange={(e) => setNewSecret(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Escape') setCreating(false) }}
-                    />
-                    {/* Stated rather than offered as a choice: Predict's
-                        binary markets are listed on the global entity, and an
-                        India key cannot reach them at all. */}
-                    <p className="text-[10px] leading-relaxed text-slate-500">
-                      Use a <strong className="text-slate-400">Delta Global</strong> key
-                      — Predict markets are not listed on Delta India. The secret is
-                      encrypted before it is stored and cannot be read back, and the
-                      connection is checked by the worker from the whitelisted IP.
-                    </p>
+                    {/* Masked by default, with a reveal: these are long
+                        random strings and a typo in one is indistinguishable
+                        from a wrong key until the check comes back. */}
+                    <Labelled label="API Key">
+                      <Secret
+                        value={newKey} onChange={onCredChange(setNewKey)}
+                        show={showSecrets} onToggle={() => setShowSecrets((v) => !v)}
+                        cls={fieldCls} name="delta-key"
+                      />
+                    </Labelled>
+                    <Labelled label="API Secret">
+                      <Secret
+                        value={newSecret} onChange={onCredChange(setNewSecret)}
+                        show={showSecrets} onToggle={() => setShowSecrets((v) => !v)}
+                        cls={fieldCls} name="delta-secret"
+                      />
+                    </Labelled>
+                    {/* Read-only on purpose. It is filled by the check, from
+                        what Delta reported, and is not ours to edit. */}
+                    <Labelled label="Balance">
+                      <div className={`${fieldCls} flex items-center justify-between
+                                       ${verified ? 'text-slate-100' : 'text-slate-600'}`}>
+                        <span className="nums">
+                          {verified
+                            ? `$${Number(check.balance ?? 0).toLocaleString('en-US',
+                                { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : '—'}
+                        </span>
+                        <span className="text-[10px] text-slate-600">
+                          {verified ? 'from Delta' : 'verify to read'}
+                        </span>
+                      </div>
+                    </Labelled>
                   </>
                 )}
                 <div className="flex justify-end gap-1.5 pt-0.5">
@@ -382,12 +499,24 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                                      hover:text-slate-300">
                     Cancel
                   </button>
-                  <button onClick={create} disabled={busy}
-                          className="rounded-md bg-sky-500 px-2.5 py-1 text-[11px]
-                                     font-semibold text-white hover:bg-sky-400
-                                     disabled:opacity-50">
-                    Create
-                  </button>
+                  {/* On a live account Create only appears once the credentials
+                      have actually reached Delta, so an account cannot exist in
+                      a state where it could never trade. */}
+                  {live && !verified ? (
+                    <button onClick={verify} disabled={checking || busy}
+                            className="rounded-md bg-sky-500 px-2.5 py-1 text-[11px]
+                                       font-semibold text-white hover:bg-sky-400
+                                       disabled:opacity-50">
+                      {checking ? 'Verifying…' : 'Verify'}
+                    </button>
+                  ) : (
+                    <button onClick={create} disabled={busy}
+                            className="rounded-md bg-sky-500 px-2.5 py-1 text-[11px]
+                                       font-semibold text-white hover:bg-sky-400
+                                       disabled:opacity-50">
+                      Create
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (

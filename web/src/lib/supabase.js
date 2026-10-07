@@ -288,6 +288,37 @@ export async function saveDeltaCredentials(accountId, apiKey, apiSecret, baseUrl
   return data?.[0] ?? null
 }
 
+/**
+ * Stage a credential check for credentials that have no account yet.
+ *
+ * The create form verifies before it creates anything, so there is nothing to
+ * attach these to. Returns a token to poll with. The worker performs the call,
+ * because Delta authorises by IP and the whitelisted address is its own.
+ */
+export async function requestDeltaCheck(apiKey, apiSecret, baseUrl) {
+  const { data, error } = await supabase.rpc('request_delta_check', {
+    p_api_key: apiKey, p_api_secret: apiSecret, p_base_url: baseUrl,
+  })
+  if (error) throw error
+  return data
+}
+
+export async function fetchDeltaCheck(id) {
+  if (!id) return null
+  const { data, error } = await supabase.rpc('get_delta_check', { p_id: id })
+  if (error) throw error
+  return data?.[0] ?? null
+}
+
+/** Carry a passed check onto the account just made from it. */
+export async function adoptDeltaCheck(accountId, checkId) {
+  const { data, error } = await supabase.rpc('adopt_delta_check', {
+    p_account_id: accountId, p_check_id: checkId,
+  })
+  if (error) throw error
+  return data
+}
+
 export async function fetchDeltaCredentials(accountId) {
   if (!accountId) return null
   const { data, error } = await supabase.rpc('get_delta_credentials_meta', {

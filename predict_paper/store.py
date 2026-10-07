@@ -331,6 +331,28 @@ class SupabaseStore:
             self._note_failure("credentials -> %s" % exc)
             return []
 
+    def claim_credential_checks(self) -> List[Dict[str, Any]]:
+        """Staged checks for credentials not yet attached to an account.
+
+        The form verifies before it creates, so these arrive with no account
+        behind them. Claiming marks them taken in the same statement, so two
+        workers cannot both answer one.
+        """
+        rows = self._post("rpc/claim_delta_checks", {},
+                          prefer="return=representation")
+        return rows if isinstance(rows, list) else []
+
+    def set_credential_check(self, check_id: str, status: str,
+                             balance: Optional[float] = None,
+                             message: str = "", seen_ip: str = "") -> None:
+        self._post("rpc/set_delta_check", {
+            "p_id": check_id,
+            "p_status": status,
+            "p_balance": balance,
+            "p_message": (message or None),
+            "p_seen_ip": (seen_ip or None),
+        })
+
     def credentials_decrypted(self, account_id: int) -> Optional[Dict[str, Any]]:
         """Key, secret and entity for one account. service_role only."""
         rows = self._post("rpc/get_delta_credentials_decrypted",
