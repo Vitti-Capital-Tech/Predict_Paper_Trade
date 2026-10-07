@@ -205,6 +205,7 @@ export default function App() {
             account={account}
             accounts={visible}
             mode={mode}
+            totalAccounts={accounts.length}
             unavailable={accountsUnavailable}
             onSelect={setAccountId}
             onAccountsChanged={loadAccounts}

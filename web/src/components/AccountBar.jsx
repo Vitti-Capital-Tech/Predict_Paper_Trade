@@ -42,7 +42,8 @@ function IconButton({ title, onClick, tone = 'slate', children }) {
 }
 
 export default function AccountBar({ account, accounts, onSelect, onAccountsChanged,
-                                     unavailable, mode = 'paper' }) {
+                                     unavailable, mode = 'paper',
+                                     totalAccounts = 0 }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
@@ -120,7 +121,18 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   async function saveEdit(a) {
     const value = Number(draftBalance)
     const name = draftName.trim()
-    if (!name || !Number.isFinite(value) || value < 0) { setEditing(null); return }
+    if (!name) { setEditing(null); return }
+    // On a live account only the name is ours to change; the balance is
+    // Delta's. Guarded here as well as in the form, so a stale draft value
+    // cannot be written by pressing Enter.
+    if (live) {
+      await run(async () => {
+        await updateAccount(a.id, { name })
+        setEditing(null)
+      })
+      return
+    }
+    if (!Number.isFinite(value) || value < 0) { setEditing(null); return }
     await run(async () => {
       // The starting balance moves with an edited balance, so "reset" keeps
       // meaning "back to what I put in" rather than back to some earlier figure.
@@ -135,7 +147,11 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
 
   async function remove(a) {
     await run(async () => {
-      if (accounts.length <= 1) {
+      // Counted across both sides, not just the one on screen. `accounts`
+      // here is already filtered by mode, so a single live account looked
+      // like the last account in existence while eight paper ones sat behind
+      // the other tab - and refused to be deleted.
+      if (Math.max(totalAccounts, accounts.length) <= 1) {
         throw new Error('This is the only account — make another before deleting it.')
       }
       const openCount = await countOpenPositions(a.id)
@@ -279,19 +295,31 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                         if (e.key === 'Escape') setEditing(null)
                       }}
                     />
-                    <div className="relative">
-                      <span className="pointer-events-none absolute left-2 top-1/2
-                                       -translate-y-1/2 text-xs text-slate-500">$</span>
-                      <input
-                        type="number" min="0" step="100" value={draftBalance}
-                        className={`${fieldCls} no-spin pl-5`}
-                        onChange={(e) => setDraftBalance(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') saveEdit(a)
-                          if (e.key === 'Escape') setEditing(null)
-                        }}
-                      />
-                    </div>
+                    {/* Renaming is fine on either side. Editing the balance
+                        is not: on a live account the money is Delta's figure,
+                        and typing over it would only make this screen disagree
+                        with the exchange until the next sync. */}
+                    {live ? (
+                      <div className={`${fieldCls} flex items-center justify-between
+                                       text-slate-500`}>
+                        <span className="nums">{money(a.balance)}</span>
+                        <span className="text-[10px]">from Delta</span>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-2 top-1/2
+                                         -translate-y-1/2 text-xs text-slate-500">$</span>
+                        <input
+                          type="number" min="0" step="100" value={draftBalance}
+                          className={`${fieldCls} no-spin pl-5`}
+                          onChange={(e) => setDraftBalance(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveEdit(a)
+                            if (e.key === 'Escape') setEditing(null)
+                          }}
+                        />
+                      </div>
+                    )}
                     <div className="flex justify-end gap-1.5 pt-0.5">
                       <button onClick={() => setEditing(null)}
                               className="px-2 py-1 text-[11px] text-slate-500
@@ -353,14 +381,19 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                         odds of hitting the wrong row's bin went up with it. */}
                     {isCurrent && (
                       <span className="flex shrink-0 items-center gap-1">
-                        <IconButton title="Edit name and balance"
+                        <IconButton title={live ? 'Rename account'
+                                                : 'Edit name and balance'}
                                     onClick={() => startEdit(a)}>
                           <PencilIcon />
                         </IconButton>
-                        <IconButton title={`Reset to ${money(a.starting_balance)}`}
-                                    onClick={() => reset(a)}>
-                          <ResetIcon />
-                        </IconButton>
+                        {/* Resetting restores a starting balance this side
+                            never had. Only Delta can change a live balance. */}
+                        {!live && (
+                          <IconButton title={`Reset to ${money(a.starting_balance)}`}
+                                      onClick={() => reset(a)}>
+                            <ResetIcon />
+                          </IconButton>
+                        )}
                         <IconButton title="Delete account" tone="rose"
                                     onClick={() => { setEditing(null); setConfirming(a.id) }}>
                           <TrashIcon />
