@@ -10,6 +10,11 @@
 --
 -- Run in the Supabase SQL editor, after 023. Safe to run more than once.
 
+-- `create or replace` cannot change a function's return type, so an earlier
+-- copy with the old output columns has to go first. Dropping a function does
+-- not touch the table or anything stored in it.
+drop function if exists public.upsert_delta_credentials(bigint, text, text, text);
+
 create or replace function public.upsert_delta_credentials(
   p_account_id bigint,
   p_api_key    text,

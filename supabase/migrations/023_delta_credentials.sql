@@ -66,6 +66,11 @@ $$;
 revoke all on function public._delta_cred_key() from public, anon, authenticated;
 
 -- ------------------------------------------------------------------ write --
+-- `create or replace` cannot change a function's return type, so an earlier
+-- copy with the old output columns has to go first. Dropping a function does
+-- not touch the table or anything stored in it.
+drop function if exists public.upsert_delta_credentials(bigint, text, text, text);
+
 create or replace function public.upsert_delta_credentials(
   p_account_id bigint,
   p_api_key    text,
