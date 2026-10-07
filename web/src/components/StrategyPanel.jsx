@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchStrategyConfig, updateStrategyConfig, fetchAllStrategyConfigs,
 } from '../lib/supabase'
@@ -175,7 +175,32 @@ function Field({ label, hint, info, children, wide = false }) {
  * The unit sits inside the box rather than in a line underneath, so it is
  * still readable while you are typing into the field it belongs to.
  */
-function Num({ value, onChange, step = 1, min, max, unit, prefix }) {
+/**
+ * A number field that can be cleared to retype, without being saveable empty.
+ *
+ * Clearing one used to send null, which the column refuses - so emptying a
+ * required field to type a new number produced a database error on Save
+ * rather than the new number. It now remembers the last real value and puts
+ * it back when the field is left empty, so the clearing is a step in typing
+ * rather than a state that can be saved.
+ *
+ * `nullable` is for the fields where empty means something - no stop loss, no
+ * cap - and those are left alone.
+ */
+function Num({ value, onChange, step = 1, min, max, unit, prefix,
+               nullable = false }) {
+  const lastGood = useRef(value)
+  useEffect(() => {
+    if (value !== null && value !== undefined && value !== '') lastGood.current = value
+  }, [value])
+
+  // What is actually in the box while it is being edited. Mirroring the
+  // parent on every keystroke meant an empty box was re-rendered from a value
+  // that had not been cleared - and some of these are converted on the way
+  // out and back (seconds to minutes), so the round trip put a digit straight
+  // back in. Held locally until the field is left, then let go.
+  const [raw, setRaw] = useState(null)
+
   return (
     <div className="relative mt-1">
       {prefix && (
@@ -189,8 +214,22 @@ function Num({ value, onChange, step = 1, min, max, unit, prefix }) {
         className={`no-spin nums w-full rounded-lg border border-white/10 bg-ink-800 py-1.5
                     text-sm text-slate-200 outline-none focus:border-sky-500/50
                     ${prefix ? 'pl-6' : 'pl-2.5'} ${unit ? 'pr-9' : 'pr-2.5'}`}
-        value={value ?? ''} step={step} min={min} max={max}
-        onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+        value={raw !== null ? raw : (value ?? '')}
+        step={step} min={min} max={max}
+        onChange={(e) => {
+          const text = e.target.value
+          setRaw(text)
+          onChange(text === '' ? null : Number(text))
+        }}
+        onBlur={() => {
+          setRaw(null)
+          // Empty is a step in typing, not a value to save - these columns
+          // refuse null, so leaving the box empty used to fail the whole Save
+          // with a database error instead of the number you meant to type.
+          if (!nullable && (value === null || value === undefined || value === '')) {
+            onChange(lastGood.current)
+          }
+        }}
       />
       {unit && (
         <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2
@@ -484,9 +523,14 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
 
       {open && (
         <>
+          {/* Sticky under the header. The filters run well past a screen, so
+              a notice at the top of them was out of sight exactly when you
+              were editing the fields it was about - and the Save it asks for
+              is further down still. top-16 clears the header. */}
           {dirty && (
-            <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg border
-                            border-amber-500/30 bg-amber-500/10 px-3 py-2">
+            <div className="sticky top-16 z-10 mx-4 mt-3 flex items-center gap-2
+                            rounded-lg border border-amber-500/40 bg-ink-900/95
+                            px-3 py-2 shadow-lg shadow-black/40 backdrop-blur">
               <svg viewBox="0 0 16 16" fill="none"
                    className="h-3.5 w-3.5 shrink-0 text-amber-400" aria-hidden="true">
                 <path d="M8 5.5v3.2M8 11v.1" stroke="currentColor" strokeWidth="1.6"
@@ -715,6 +759,7 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
             )}
             <Field label="Flatten before expiry" info="Force-close everything this long before settlement instead of letting it settle. Blank means hold, so the contract finishes at exactly $1.00 or $0.00." hint="blank = hold">
               <Num value={toMin(draft.flatten_before_expiry_sec)} unit="min" step={0.5}
+                   nullable
                    onChange={(v) => set('flatten_before_expiry_sec', toSec(v))} />
             </Field>
             <Field label="Mode" info="Which yardstick measures the exit. Spot vs strike watches BTC against your strike. Bid watches what the contract itself is worth." hint="spot vs strike, or the contract's own bid">
@@ -812,7 +857,12 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
              
               info="How much to put on each leg. Contracts follow from the price, the same way the ticket works — $25 at $0.05 is 500 contracts. There is no contract-count option because Predict does not offer one."
             >
-              <Num value={draft.investment_per_leg ?? 25} step={5} min={1} prefix="$"
+              {/* No `?? 25` fallback: the column is not null and always has a
+                  value, so the only thing it ever substituted for was a field
+                  the user had just cleared - putting the default back under
+                  them mid-edit, and teaching the restore below that 25 was
+                  the value they had. */}
+              <Num value={draft.investment_per_leg} step={5} min={1} prefix="$"
                    onChange={(v) => set('investment_per_leg', v)} />
             </Field>
 
