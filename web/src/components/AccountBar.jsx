@@ -25,6 +25,15 @@ const money = (v) =>
 
 const DEFAULT_BALANCE = 10000
 
+/** How a live account's connection reads at a glance. */
+const CONN = {
+  verified:   { dot: 'bg-emerald-400', hint: 'Connected to Delta' },
+  verifying:  { dot: 'bg-sky-400 animate-pulse', hint: 'Checking the connection…' },
+  unverified: { dot: 'bg-amber-400 animate-pulse', hint: 'Waiting for the worker to check…' },
+  invalid:    { dot: 'bg-rose-500', hint: 'Not connected — verify to see why' },
+  none:       { dot: 'bg-slate-600', hint: 'No API key saved' },
+}
+
 function IconButton({ title, onClick, tone = 'slate', children }) {
   const tones = {
     slate: 'border-white/10 text-slate-400 hover:border-white/30 hover:bg-white/10'
@@ -188,16 +197,40 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
 
   const live = mode === 'live'
 
-  // Which key the selected live account is using. Read only; it exists so the
-  // edit view can say which one, not so it can be swapped there.
+  // The selected live account's credentials: which key, and whether it still
+  // reaches Delta. Polled rather than read once - a key can be revoked or an
+  // allowlist edited at any time, and nothing says so until it is asked.
+  const credStatus = liveCred?.status ?? (live && account?.id ? 'none' : null)
+  const credPending = credStatus === 'unverified' || credStatus === 'verifying'
+
   useEffect(() => {
     if (!live || !account?.id) { setLiveCred(null); return }
     let alive = true
-    fetchDeltaCredentials(account.id)
+    const read = () => fetchDeltaCredentials(account.id)
       .then((row) => alive && setLiveCred(row))
       .catch(() => alive && setLiveCred(null))
-    return () => { alive = false }
-  }, [live, account?.id])
+    read()
+    const t = setInterval(read, credPending ? 1500 : 5000)
+    return () => { alive = false; clearInterval(t) }
+  }, [live, account?.id, credPending])
+
+  // Announce a verdict as it lands. The check runs on the worker and takes a
+  // few seconds, so without this the only sign of an answer is a dot changing
+  // colour on a screen nobody is watching by then.
+  const wasStatus = useRef(null)
+  useEffect(() => {
+    const prev = wasStatus.current
+    wasStatus.current = credStatus
+    if (prev === null || prev === credStatus) return
+    if (!(prev === 'unverified' || prev === 'verifying')) return
+    if (credStatus === 'verified') toast('Connected to Delta', 'ok')
+    if (credStatus === 'invalid') {
+      const why = liveCred?.last_error || 'Could not connect to Delta'
+      toast(liveCred?.seen_ip
+        ? `${why} — whitelist ${liveCred.seen_ip}`
+        : why, 'err')
+    }
+  }, [credStatus, liveCred?.last_error, liveCred?.seen_ip, toast])
 
   async function verifyConnection(a) {
     try {
@@ -310,6 +343,13 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
         className="flex items-center gap-2 rounded-lg border border-white/10 bg-ink-800
                    px-3 py-1.5 transition-colors hover:border-white/20"
       >
+        {/* Connection state lives here now that the panel is gone. On a live
+            account this is the only standing sign that it still reaches the
+            exchange; on paper there is nothing to connect to. */}
+        {live && credStatus && (
+          <span title={CONN[credStatus]?.hint ?? ''}
+                className={`h-2 w-2 shrink-0 rounded-full ${CONN[credStatus]?.dot ?? ''}`} />
+        )}
         <span className="text-xs text-slate-400">{account?.name ?? 'Account'}</span>
         <span className="nums text-xs font-semibold text-slate-100">
           {money(account?.balance)}

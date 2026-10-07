@@ -5,7 +5,6 @@ import PortfolioTabs from './components/PortfolioTabs'
 import StrategyPanel from './components/StrategyPanel'
 import AccountBar from './components/AccountBar'
 import Logo from './components/Logo'
-import LiveConnection from './components/LiveConnection'
 
 function Setup() {
   return (
@@ -215,7 +214,6 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:py-6">
-        {isLive && <LiveConnection account={account} workerLive={workerLive} />}
 
         {/* Filters and the automation switch sit above the ticket: they
             govern what the bot does with every round, so they belong where
