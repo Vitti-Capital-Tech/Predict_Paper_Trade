@@ -150,7 +150,12 @@ function Shell({ children }) {
   )
 }
 
+/**
+ * Only flagged when it is wrong. Predict is listed on the global entity, so an
+ * India key is not a variant to report neutrally - it is a key that cannot
+ * reach these markets, and saying "Delta India" calmly would hide that.
+ */
 function entityName(url) {
-  if (!url) return 'Delta'
-  return url.includes('india') ? 'Delta India' : 'Delta Global'
+  if (!url) return 'Delta Global'
+  return url.includes('india') ? 'Delta India — wrong entity' : 'Delta Global'
 }

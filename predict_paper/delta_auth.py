@@ -26,8 +26,11 @@ import requests
 
 log = logging.getLogger("predict.delta_auth")
 
-INDIA = "https://api.india.delta.exchange"
+# Predict's binary markets are listed on the global entity only. Asked for the
+# same binary products on 07 Oct 2026, api.delta.exchange returned twelve and
+# api.india.delta.exchange returned none, so an India key cannot trade these.
 GLOBAL = "https://api.delta.exchange"
+INDIA = "https://api.india.delta.exchange"
 
 # A stale read is worth nothing and the caller asks again shortly, so reads give
 # up quickly. Writes are given much longer on purpose: abandoning an order that
@@ -53,7 +56,7 @@ class DeltaAuthError(RuntimeError):
 
 class DeltaAuthClient:
     def __init__(self, api_key: str, api_secret: str,
-                 base_url: str = INDIA, timeout: Optional[float] = None):
+                 base_url: str = GLOBAL, timeout: Optional[float] = None):
         self.api_key = api_key
         self.api_secret = api_secret
         self.base_url = base_url.rstrip("/")
@@ -124,7 +127,7 @@ class DeltaAuthClient:
         return self._request("GET", "/v2/wallet/balances")
 
 
-def check_connection(api_key: str, api_secret: str, base_url: str = INDIA
+def check_connection(api_key: str, api_secret: str, base_url: str = GLOBAL
                      ) -> Tuple[bool, str, str]:
     """Verify one set of credentials.
 

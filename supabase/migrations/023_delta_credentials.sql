@@ -35,9 +35,10 @@ create table if not exists public.delta_credentials (
   api_key        text not null,
   api_secret_enc bytea not null,          -- pgp_sym_encrypt ciphertext
   key_last4      text,                    -- display only
-  -- Which Delta entity the key belongs to. The allowlist is per account on one
-  -- entity, so a key issued on one will not authenticate against the other.
-  base_url       text not null default 'https://api.india.delta.exchange',
+  -- Predict markets are listed on Delta GLOBAL. Measured 07 Oct 2026:
+  -- api.delta.exchange lists the binary products, api.india.delta.exchange
+  -- lists none of them, so a key issued on India cannot trade these at all.
+  base_url       text not null default 'https://api.delta.exchange',
   status         text not null default 'unverified'
                    check (status in ('unverified', 'verifying', 'verified', 'invalid')),
   last_error     text,
@@ -69,7 +70,7 @@ create or replace function public.upsert_delta_credentials(
   p_account_id bigint,
   p_api_key    text,
   p_api_secret text,
-  p_base_url   text default 'https://api.india.delta.exchange'
+  p_base_url   text default 'https://api.delta.exchange'
 )
 returns table (account_id bigint, key_last4 text, status text)
 language plpgsql security definer set search_path = ''
@@ -196,3 +197,13 @@ grant execute on function public.set_delta_verification(bigint, text, text, text
 -- anyone who can open it can already create accounts and place orders. Storing
 -- trading credentials does not change that, but it does raise what it costs.
 -- Put the site behind authentication before a live account is funded.
+
+-- Re-runnable: if an earlier copy of this file defaulted to the India entity,
+-- correct the default and anything already stored against it. Predict is not
+-- listed there, so such a row could never have worked.
+alter table public.delta_credentials
+  alter column base_url set default 'https://api.delta.exchange';
+
+update public.delta_credentials
+   set base_url = 'https://api.delta.exchange', status = 'unverified'
+ where base_url <> 'https://api.delta.exchange';

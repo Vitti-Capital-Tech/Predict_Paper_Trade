@@ -61,7 +61,8 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   // secret; nothing here is kept once the account is made.
   const [newKey, setNewKey] = useState('')
   const [newSecret, setNewSecret] = useState('')
-  const [newEntity, setNewEntity] = useState('https://api.india.delta.exchange')
+  // Not a choice: Predict's markets are listed on the global entity only.
+  const DELTA_GLOBAL = 'https://api.delta.exchange'
 
   const wrapRef = useRef(null)
 
@@ -164,7 +165,7 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
         // fails the account exists without credentials, which the panel shows
         // as "not connected" rather than pretending it is ready.
         await saveDeltaCredentials(made.id, newKey.trim(), newSecret.trim(),
-                                   newEntity)
+                                   DELTA_GLOBAL)
       }
       if (made) onSelect(made.id)
       setCreating(false)
@@ -357,19 +358,14 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                       onChange={(e) => setNewSecret(e.target.value)}
                       onKeyDown={(e) => { if (e.key === 'Escape') setCreating(false) }}
                     />
-                    {/* The allowlist is per account on one entity, so a key
-                        issued on India will not authenticate against global. */}
-                    <select
-                      value={newEntity} className={fieldCls}
-                      onChange={(e) => setNewEntity(e.target.value)}
-                    >
-                      <option value="https://api.india.delta.exchange">Delta India</option>
-                      <option value="https://api.delta.exchange">Delta Global</option>
-                    </select>
+                    {/* Stated rather than offered as a choice: Predict's
+                        binary markets are listed on the global entity, and an
+                        India key cannot reach them at all. */}
                     <p className="text-[10px] leading-relaxed text-slate-500">
-                      The secret is encrypted before it is stored and cannot be
-                      read back. The connection is checked by the worker, from
-                      the whitelisted IP.
+                      Use a <strong className="text-slate-400">Delta Global</strong> key
+                      — Predict markets are not listed on Delta India. The secret is
+                      encrypted before it is stored and cannot be read back, and the
+                      connection is checked by the worker from the whitelisted IP.
                     </p>
                   </>
                 )}
