@@ -5,7 +5,8 @@ import {
 import { fetchCandles, indexSymbolFor } from '../lib/delta'
 import { atrNow, atrSeries, barSeconds } from '../lib/atr'
 import Dropdown from './Dropdown'
-import CopySettingsModal from './CopySettingsModal'
+import { useToast } from './Toasts'
+import ImportStrategyModal from './ImportStrategyModal'
 
 /**
  * The bot's control surface.
@@ -230,14 +231,15 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
   const [open, setOpen] = useState(false)
   // Every account's settings, so the copy dialog can show which market each
   // target trades before it writes over anything. Loaded when it is opened.
-  const [copyOpen, setCopyOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const toast = useToast()
   const [allConfigs, setAllConfigs] = useState([])
 
   const accountId = account?.id ?? null
 
-  const openCopy = useCallback(() => {
+  const openImport = useCallback(() => {
     fetchAllStrategyConfigs().then(setAllConfigs).catch(() => setAllConfigs([]))
-    setCopyOpen(true)
+    setImportOpen(true)
   }, [])
 
   // Switching account swaps the whole strategy, so the form has to let go of
@@ -422,6 +424,27 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
                        transition-colors hover:border-white/25"
           >
             {open ? 'Hide filters' : 'Filters'}
+          </button>
+
+          {/* Pull, not push: the account being changed is the one on screen,
+              with its Save and Revert right here if the result is wrong. */}
+          <button
+            onClick={openImport}
+            disabled={busy || accounts.length < 2}
+            title={accounts.length < 2
+              ? 'There is only one account'
+              : "Bring another account's filters into this one"}
+            className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5
+                       text-xs text-slate-300 transition-colors hover:border-white/25
+                       disabled:opacity-40 disabled:hover:border-white/10"
+          >
+            <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
+              <path d="M8 2.5v7m0 0L5.2 6.7M8 9.5l2.8-2.8" stroke="currentColor"
+                    strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M2.8 11v1.2A1.5 1.5 0 0 0 4.3 13.7h7.4a1.5 1.5 0 0 0 1.5-1.5V11"
+                    stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+            Import
           </button>
 
           <button
@@ -774,30 +797,7 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
 
           <div className="flex items-center justify-between gap-3 border-t border-white/5
                           px-4 py-3">
-            {/* Copies what is saved, not what is typed, so the button waits
-                for Save rather than pushing values this account does not
-                itself have yet. */}
-            <button
-              onClick={openCopy}
-              disabled={dirty || busy || accounts.length < 2}
-              title={dirty
-                ? 'Save your changes before copying them'
-                : accounts.length < 2
-                  ? 'There is only one account'
-                  : 'Apply these filters to other accounts'}
-              className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5
-                         text-xs text-slate-400 transition-colors hover:border-white/25
-                         hover:text-slate-200 disabled:opacity-40
-                         disabled:hover:border-white/10 disabled:hover:text-slate-400"
-            >
-              <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
-                <rect x="5.5" y="5.5" width="8" height="8" rx="1.5"
-                      stroke="currentColor" strokeWidth="1.3" />
-                <path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4a1.5 1.5 0 0 0-1.5 1.5V9A1.5 1.5 0 0 0 4 10.5h2"
-                      stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-              </svg>
-              Copy to other accounts
-            </button>
+            <div />
             <div className="flex gap-2">
               <button
                 onClick={() => setDraft(saved)} disabled={!dirty || busy}
@@ -838,13 +838,20 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
         </p>
       )}
 
-      <CopySettingsModal
-        open={copyOpen}
-        onClose={() => setCopyOpen(false)}
+      <ImportStrategyModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
         account={account}
-        config={saved}
         accounts={accounts}
         configs={allConfigs}
+        saved={saved}
+        onImport={(patch, from, cross) => {
+          setDraft((d) => ({ ...d, ...patch }))
+          setOpen(true)
+          toast(cross
+            ? `Filters from ${from} imported — ATR and point settings kept`
+            : `Filters from ${from} imported — review and Save`, 'ok')
+        }}
       />
     </div>
   )
