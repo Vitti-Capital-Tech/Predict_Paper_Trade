@@ -457,7 +457,11 @@ export default function TradePanel({ atrInfo, account, workerLive, slippage, onS
       </div>
 
       {/* Chart on the left, trade ticket on the right */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+      {/* The second column is the ticket's. On live there is no ticket, so
+          the track goes with it rather than being left as 360px of nothing
+          beside a chart that could use the width. */}
+      <div className={`grid grid-cols-1 gap-4 ${
+        mode === 'live' ? '' : 'lg:grid-cols-[minmax(0,1fr)_360px]'}`}>
 
         <div className="overflow-hidden rounded-xl border border-white/10 bg-ink-900">
           {/* Market selectors */}
