@@ -1217,7 +1217,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
 
         {/* History, not a view of the current tab, so it stays put rather
             than appearing only under Recent Trades. */}
-        <ExportTrades accountId={accountId} accountName={account?.name} />
+        <ExportTrades accountId={accountId} accountName={account?.name} mode={mode} />
       </div>
 
       <div className="p-4">

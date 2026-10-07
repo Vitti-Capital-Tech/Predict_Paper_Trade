@@ -73,7 +73,7 @@ function Icon() {
   )
 }
 
-export default function ExportTrades({ accountId, accountName }) {
+export default function ExportTrades({ accountId, accountName, mode = 'paper' }) {
   const [busy, setBusy] = useState(null)   // 'one' | 'all'
   const [error, setError] = useState(null)
 
@@ -86,11 +86,12 @@ export default function ExportTrades({ accountId, accountName }) {
         fetchTradeHistory(all ? null : accountId),
         all ? fetchAccounts() : Promise.resolve([]),
       ])
-      const names = new Map(accounts.map((a) => [a.id, a.name]))
-      // Most of the stored history belongs to accounts that have since been
-      // deleted, plus a handful of legs from before accounts existed at all.
-      // Those are not anybody's trades any more, so the export is the
-      // accounts that are actually there.
+      // Only the accounts that exist, and only the ones on this side. Paper
+      // and live are different money: a live export with eight paper
+      // accounts in it is not a record of anything.
+      const names = new Map(accounts
+        .filter((a) => (a.mode ?? 'paper') === mode)
+        .map((a) => [a.id, a.name]))
       const kept = all ? rows.filter((r) => names.has(r.account_id)) : rows
       if (!kept.length) throw new Error('No completed trades to export yet.')
       const tagged = kept.map((r) => ({
@@ -100,7 +101,7 @@ export default function ExportTrades({ accountId, accountName }) {
       // Oldest first: a history reads forwards, and it is what a running
       // total in a spreadsheet needs.
       tagged.reverse()
-      downloadCsv(csvName(all ? 'all-accounts' : (accountName || 'account')),
+      downloadCsv(csvName(all ? `all-${mode}-accounts` : (accountName || 'account')),
                   toCsv(tagged, COLUMNS))
     } catch (e) {
       setError(e.message ?? String(e))
@@ -128,11 +129,12 @@ export default function ExportTrades({ accountId, accountName }) {
       <button
         onClick={() => run('all')}
         disabled={busy !== null}
-        title="Download every completed trade across all accounts as CSV"
+        title={`Download every completed trade across all ${mode} accounts as CSV`}
         className={cls}
       >
         <Icon />
-        {busy === 'all' ? 'Preparing…' : 'All accounts'}
+        {busy === 'all' ? 'Preparing…'
+          : mode === 'live' ? 'All live accounts' : 'All paper accounts'}
       </button>
     </div>
   )
