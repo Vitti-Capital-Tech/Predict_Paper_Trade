@@ -214,25 +214,8 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:py-6">
-        {/* Said plainly, because the dangerous version of this screen is the
-            one that looks live and is not - or looks paper and is not. The
-            worker refuses live accounts outright today; it fills against a
-            simulated book and nothing it does reaches the exchange. */}
         {isLive && <LiveConnection account={account} workerLive={workerLive} />}
-        {isLive && (
-          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
-            <p className="text-xs font-semibold text-rose-300">
-              Live accounts are not trading yet
-            </p>
-            <p className="mt-1 text-[11px] leading-relaxed text-rose-200/80">
-              Nothing here reaches Delta. The worker only paper trades and skips
-              these accounts entirely, so a strategy armed on this side opens
-              nothing — on the exchange or on paper. Real execution needs the
-              whitelisted IP, credentials held on the worker, and the kill
-              switch turned on.
-            </p>
-          </div>
-        )}
+
         {/* Filters and the automation switch sit above the ticket: they
             govern what the bot does with every round, so they belong where
             they are read first rather than under the thing they control. */}

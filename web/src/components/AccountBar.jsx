@@ -147,7 +147,9 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   const live = mode === 'live'
 
   async function create() {
-    const value = Number(newBalance)
+    // A live account opens at zero and takes its balance from Delta; there is
+    // no paper money in it to start with.
+    const value = live ? 0 : Number(newBalance)
     const name = newName.trim() || `Account ${accounts.length + 1}`
     if (!Number.isFinite(value) || value < 0) return
     // A live account without credentials cannot do anything, and half-made is
@@ -328,20 +330,25 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                     if (e.key === 'Escape') setCreating(false)
                   }}
                 />
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-2 top-1/2
-                                   -translate-y-1/2 text-xs text-slate-500">$</span>
-                  <input
-                    type="number" min="0" step="100" value={newBalance}
-                    className={`${fieldCls} no-spin pl-5`}
-                    placeholder="Starting balance"
-                    onChange={(e) => setNewBalance(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') create()
-                      if (e.key === 'Escape') setCreating(false)
-                    }}
-                  />
-                </div>
+                {/* Paper only. A live account's money is whatever Delta
+                    says it is - typing a number here would invent a second
+                    balance that the exchange has never heard of. */}
+                {!live && (
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-2 top-1/2
+                                     -translate-y-1/2 text-xs text-slate-500">$</span>
+                    <input
+                      type="number" min="0" step="100" value={newBalance}
+                      className={`${fieldCls} no-spin pl-5`}
+                      placeholder="Starting balance"
+                      onChange={(e) => setNewBalance(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') create()
+                        if (e.key === 'Escape') setCreating(false)
+                      }}
+                    />
+                  </div>
+                )}
                 {live && (
                   <>
                     <input

@@ -366,7 +366,10 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
     return (
       <div className="rounded-xl border border-white/10 bg-ink-900 px-4 py-6
                       text-center text-xs text-slate-600">
-        Loading strategy…
+        {/* Without an account there is nothing to load, and saying "loading"
+            forever reads as a hang rather than an empty state. */}
+        {!accountId ? 'No account on this side yet — create one to set its filters.'
+          : 'Loading strategy…'}
       </div>
     )
   }
