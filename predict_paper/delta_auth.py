@@ -140,6 +140,27 @@ class DeltaAuthClient:
         return (payload or {}).get("result")
 
     # ---- calls ----------------------------------------------------------
+    def place_order(self, order: Dict[str, Any]) -> Any:
+        """POST /v2/orders.
+
+        Fields used here: product_symbol, size (integer contracts), side
+        ('buy'|'sell'), order_type, limit_price (string), time_in_force and
+        client_order_id.
+        """
+        return self._request("POST", "/v2/orders", body=order)
+
+    def open_positions(self) -> Any:
+        """What the exchange says this account is holding.
+
+        The authority on that, as against anything recorded here: a write that
+        timed out may still have been accepted.
+        """
+        return self._request("GET", "/v2/positions/margined")
+
+    def cancel_order(self, order_id: Any, product_id: Any) -> Any:
+        return self._request("DELETE", "/v2/orders",
+                             body={"id": order_id, "product_id": product_id})
+
     def wallet_balances(self) -> Any:
         """Cheapest authenticated read.
 
@@ -148,6 +169,34 @@ class DeltaAuthClient:
         any of them shows up here rather than on a live order.
         """
         return self._request("GET", "/v2/wallet/balances")
+
+
+def clean_price(price: Optional[float]) -> Optional[str]:
+    """A computed price as Delta will accept it.
+
+    Arithmetic on quotes leaves float noise - 0.7000000000000002 - and Delta
+    rejects that as `bad_schema`. The inputs are already tick-aligned, so
+    rounding to four places only strips the noise.
+    """
+    if price is None:
+        return None
+    try:
+        f = float(price)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f in (float("inf"), float("-inf")):
+        return None
+    return ("%.4f" % f).rstrip("0").rstrip(".") or "0"
+
+
+# Delta caps client_order_id, and an over-long one is refused as `bad_schema`.
+MAX_COID = 36
+
+
+def clamp_tag(tag: str) -> str:
+    """Keep the tail: the end of the tag is what identifies the leg."""
+    s = str(tag or "")
+    return s if len(s) <= MAX_COID else s[-MAX_COID:]
 
 
 class CheckResult(NamedTuple):

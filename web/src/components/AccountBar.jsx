@@ -253,6 +253,17 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
     }
   }, [credStatus, liveCred?.last_error, liveCred?.seen_ip, liveCred?.balance, toast])
 
+  async function toggleLive(a) {
+    const next = !a.live_enabled
+    await run(async () => {
+      await updateAccount(a.id, { live_enabled: next })
+      toast(next
+        ? `${a.name} is LIVE — the worker will send real orders`
+        : `${a.name} stopped — no further orders will be sent`,
+        next ? 'err' : 'ok')
+    })
+  }
+
   async function verifyConnection(a) {
     setVerifyingId(a.id)
     try {
@@ -506,6 +517,28 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                         {/* Rechecking is the one live-account action worth a
                             button of its own: keys get revoked and allowlists
                             get edited, and nothing tells you until you ask. */}
+                        {/* Sending orders is a separate decision from being
+                            connected, and the more serious of the two - so it
+                            is its own switch, not a consequence of saving a
+                            key. */}
+                        {live && liveCred?.status === 'verified' && (
+                          <button
+                            type="button"
+                            title={a.live_enabled
+                              ? 'Live trading is ON — click to stop sending orders'
+                              : 'Live trading is OFF — no orders are sent'}
+                            aria-label="Live trading"
+                            aria-pressed={!!a.live_enabled}
+                            onClick={(e) => { e.stopPropagation(); toggleLive(a) }}
+                            className={`rounded-md border px-1.5 py-1 text-[10px]
+                                        font-semibold transition-colors ${
+                              a.live_enabled
+                                ? 'border-rose-500/50 bg-rose-500/20 text-rose-300'
+                                : 'border-white/10 text-slate-500 hover:border-white/30'}`}
+                          >
+                            {a.live_enabled ? 'LIVE' : 'OFF'}
+                          </button>
+                        )}
                         {live && (() => {
                           // Spinning from the click until the worker answers,
                           // whichever of the two knows first.

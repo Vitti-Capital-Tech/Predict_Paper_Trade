@@ -18,6 +18,7 @@ from .indicators import AtrGate
 from .portfolio import Portfolio, Position
 from .rounds import Contract, Round, build_rounds
 from .delta_auth import check_connection
+from .live import LiveExecutor, dry_run
 from .store import build_store
 from .strategy import Strategy
 
@@ -70,6 +71,10 @@ class AccountStrategy:
         self.cfg = cfg
         self.name = str(account_id)
         self.balance = 0.0
+        # Live accounts send orders to the exchange instead of filling against
+        # a simulated book. `executor` is None until credentials are read.
+        self.live = False
+        self.executor = None
         self.strategy = Strategy(cfg)
         # Its own fill engine, holding a reference to this account's cfg.fills,
         # so a spread guard edited in the dashboard reaches the entry path.
@@ -199,18 +204,19 @@ class Engine:
             if aid is None:
                 continue
 
-            # This worker fills against a simulated book. A live account must
-            # not quietly get paper fills that look like real ones, so it is
-            # dropped here rather than traded as though the distinction did
-            # not exist. Live execution is a separate path and does not exist
-            # yet. Accounts predating migration 022 have no mode and are
+            # A live account trades through the exchange or not at all. It
+            # must never get a simulated fill that reads like a real one, so
+            # one without its switch on is dropped rather than quietly paper
+            # traded. Accounts predating migration 022 have no mode and are
             # paper, which is what they have always been.
-            mode = (balances.get(aid) or {}).get("mode") or "paper"
-            if mode != "paper":
+            info = balances.get(aid) or {}
+            mode = info.get("mode") or "paper"
+            armed_live = bool(info.get("live_enabled"))
+            if mode != "paper" and not armed_live:
                 if aid not in self._skipped_live:
                     self._skipped_live.add(aid)
-                    log.info("SKIP   account %s is %s - this worker only paper trades",
-                             (balances.get(aid) or {}).get("name") or aid, mode)
+                    log.info("SKIP   account %s is live but not enabled - "
+                             "nothing will be sent", info.get("name") or aid)
                 self.accounts.pop(aid, None)
                 continue
             self._skipped_live.discard(aid)
@@ -227,9 +233,11 @@ class Engine:
             acct.strategy = Strategy(acct.cfg)
             acct.rebuild_gate_if_needed(self.client)
 
-            info = balances.get(aid) or {}
             acct.name = info.get("name") or str(aid)
             acct.balance = float(info.get("balance") or 0.0)
+            acct.live = mode != "paper"
+            if acct.live:
+                self._attach_executor(acct)
 
             stamp = row.get("updated_at")
             if stamp != acct.stamp:
@@ -419,6 +427,19 @@ class Engine:
                         log.info("HALT   %-28s %.0fs to expiry - holding to settlement",
                                  pos.symbol, tte)
                     continue
+
+            # Selling is not implemented for live accounts yet, and an exit
+            # recorded here that never reached the exchange is worse than no
+            # exit at all: the position would still be open on Delta with
+            # nothing watching it. A binary settles itself at expiry, so
+            # holding is a real outcome rather than a stuck one.
+            owner = self.accounts.get(pos.account_id)
+            if owner is not None and getattr(owner, "live", False):
+                if pos.symbol not in self._halt_logged:
+                    self._halt_logged.add(pos.symbol)
+                    log.info("HOLD   %-28s live position - held to settlement "
+                             "(early exits are not live yet)", pos.symbol)
+                continue
 
             # A position is judged by the rules of the account that opened it,
             # not by whichever account was edited last. One without an account
@@ -612,8 +633,26 @@ class Engine:
                 if cfg.entry.require_both_wings:
                     return
                 continue
-            fill = acct.fills.simulate("buy", qty, book, leg.contract.best_bid,
-                                       leg.contract.best_ask, leg.contract.mark_price)
+            if acct.live:
+                # The decision is identical; only the fill differs. The limit
+                # is the price the odds rule already approved, so the exchange
+                # can only improve on it - never fill worse than the strategy
+                # agreed to pay, which is what the slippage checks below would
+                # otherwise have to catch after the money was spent.
+                if acct.executor is None:
+                    log.warning("SKIP   %-18s %s: live account has no credentials",
+                                rnd.round_id, leg.role)
+                    return
+                ceiling_live = leg.max_price
+                if cfg.entry.max_slippage is not None and leg.quoted_price is not None:
+                    ceiling_live = min(ceiling_live,
+                                       leg.quoted_price + cfg.entry.max_slippage)
+                fill = acct.executor.buy(
+                    leg.contract.symbol, int(qty), ceiling_live,
+                    rnd.round_id, leg.role)
+            else:
+                fill = acct.fills.simulate("buy", qty, book, leg.contract.best_bid,
+                                           leg.contract.best_ask, leg.contract.mark_price)
             if not fill.filled:
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, fill.reason)
                 self.portfolio.log_event("skip", round_id=rnd.round_id,
@@ -946,6 +985,27 @@ class Engine:
                 self.try_enter(acct, rnd, now, ok, value)
 
         self._publish_snapshot(rounds, now, atr_ok, atr)
+
+    def _attach_executor(self, acct: "AccountStrategy") -> None:
+        """Give a live account the means to place orders.
+
+        Credentials are read once and kept: decrypting them on every cycle
+        would put the secret through the wire far more often than it needs to
+        be. A change of key resets the account's verification status, which is
+        what brings this back through here.
+        """
+        if acct.executor is not None:
+            return
+        creds = self.store.credentials_decrypted(acct.account_id)
+        if not creds or not creds.get("api_secret"):
+            log.warning("LIVE   %s is enabled but has no usable credentials",
+                        acct.name)
+            return
+        acct.executor = LiveExecutor(
+            acct.account_id, acct.name, creds.get("api_key") or "",
+            creds.get("api_secret") or "", creds.get("base_url") or "")
+        log.info("LIVE   %s armed%s", acct.name,
+                 " (DRY RUN - nothing will be sent)" if dry_run() else "")
 
     # ---- live credentials -----------------------------------------------
     def verify_pending_credentials(self, now_ts: float) -> None:
