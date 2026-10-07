@@ -444,11 +444,15 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
                        text-xs text-slate-300 transition-colors hover:border-white/25
                        disabled:opacity-40 disabled:hover:border-white/10"
           >
+            {/* Two sheets, the usual mark for copying - the download arrow
+                it replaced read as fetching a file. */}
             <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5" aria-hidden="true">
-              <path d="M8 2.5v7m0 0L5.2 6.7M8 9.5l2.8-2.8" stroke="currentColor"
-                    strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M2.8 11v1.2A1.5 1.5 0 0 0 4.3 13.7h7.4a1.5 1.5 0 0 0 1.5-1.5V11"
-                    stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              <rect x="5.8" y="5.8" width="7.4" height="7.4" rx="1.6"
+                    stroke="currentColor" strokeWidth="1.3" />
+              <path d="M10.2 3.6V3A1.2 1.2 0 0 0 9 1.8H3.9A1.2 1.2 0 0 0 2.7 3v5.1
+                       A1.2 1.2 0 0 0 3.9 9.3h.6"
+                    stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"
+                    strokeLinejoin="round" />
             </svg>
             Copy
           </button>

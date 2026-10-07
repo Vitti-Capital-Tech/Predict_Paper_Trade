@@ -111,8 +111,6 @@ export default function ImportStrategyModal({
       patch,
       changes,
       source: accounts.find((a) => a.id === picked),
-      marketChange: String(saved.underlying) !== String(from.underlying)
-        ? { was: saved.underlying, now: from.underlying } : null,
     }
   }, [picked, saved, byAccount, accounts])
 
@@ -191,20 +189,6 @@ export default function ImportStrategyModal({
         ) : (
           <>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-              {plan.marketChange && (
-                <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-                  <p className="text-[11px] font-semibold text-amber-300">
-                    This changes the market to {plan.marketChange.now}
-                  </p>
-                  <p className="mt-0.5 text-[10px] leading-relaxed text-amber-200/80">
-                    {account?.name} currently trades {plan.marketChange.was}. Its ATR
-                    threshold and point-based exits come across too, which is what
-                    makes it the same strategy — but they are in {plan.marketChange.now}
-                    &rsquo;s points, so check them against this account before arming it.
-                  </p>
-                </div>
-              )}
-
               {plan.changes.length === 0 ? (
                 <p className="py-4 text-center text-xs text-slate-600">
                   Nothing differs — these accounts already have the same filters.
@@ -233,11 +217,7 @@ export default function ImportStrategyModal({
             </div>
 
             <div className="border-t border-white/5 px-5 py-3">
-              <p className="text-[10px] leading-relaxed text-slate-600">
-                Saved immediately on confirming. The ON/OFF switch is not copied —
-                it stays as you set it here.
-              </p>
-              <div className="mt-2.5 flex justify-end gap-1.5">
+              <div className="flex justify-end gap-1.5">
                 <button
                   onClick={() => setPicked(null)}
                   className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-300"
