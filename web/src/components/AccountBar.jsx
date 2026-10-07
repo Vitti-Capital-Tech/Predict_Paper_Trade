@@ -365,11 +365,16 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
           title={account.live_enabled
             ? 'Real orders are being sent — turn the strategy off to stop'
             : 'No orders are being sent'}
-          className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${
+          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5
+                      text-[11px] font-semibold ${
             account.live_enabled
               ? 'border-rose-500/50 bg-rose-500/20 text-rose-300'
               : 'border-white/10 bg-ink-800 text-slate-500'}`}
         >
+          {/* Pulsing while it is sending: a word alone is read once and then
+              stops being noticed, and this is the state worth noticing. */}
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+            account.live_enabled ? 'animate-pulse bg-rose-400' : 'bg-slate-600'}`} />
           {account.live_enabled ? 'LIVE' : 'OFF'}
         </span>
       )}
