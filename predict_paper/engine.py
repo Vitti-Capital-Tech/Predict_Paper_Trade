@@ -17,6 +17,7 @@ from .fills import FillEngine
 from .indicators import AtrGate
 from .portfolio import Portfolio, Position
 from .rounds import Contract, Round, build_rounds
+from .delta_auth import check_connection
 from .store import build_store
 from .strategy import Strategy
 
@@ -154,6 +155,7 @@ class Engine:
         # Live accounts already reported as skipped, so the line is logged once
         # rather than on every config refresh.
         self._skipped_live: set = set()
+        self._creds_at: float = 0.0
         self._products: List[Dict] = []
         self._products_at: float = 0.0
         self._seen_rounds: set = set()
@@ -891,6 +893,7 @@ class Engine:
 
         # Settings first, so everything below runs under the current rules.
         self.refresh_remote_config(now_ts)
+        self.verify_pending_credentials(now_ts)
         self.maybe_adopt(now_ts)
 
         tickers = self.client.binary_tickers()
@@ -943,6 +946,41 @@ class Engine:
                 self.try_enter(acct, rnd, now, ok, value)
 
         self._publish_snapshot(rounds, now, atr_ok, atr)
+
+    # ---- live credentials -----------------------------------------------
+    def verify_pending_credentials(self, now_ts: float) -> None:
+        """Prove any newly saved Delta credentials, from this host.
+
+        Delta authorises by IP, and the whitelisted address is this machine's.
+        The browser therefore cannot check its own work - a check made there
+        would fail on perfectly good credentials and teach you to distrust a
+        working setup. It asks instead, and this answers.
+
+        Reads only: one call to /v2/wallet/balances. It cannot place an order.
+        """
+        if (now_ts - self._creds_at) < 10.0:
+            return
+        self._creds_at = now_ts
+
+        for row in self.store.credentials_awaiting_check():
+            aid = row.get("account_id")
+            if aid is None:
+                continue
+            self.store.set_verification(aid, "verifying")
+            creds = self.store.credentials_decrypted(aid)
+            if not creds or not creds.get("api_secret"):
+                self.store.set_verification(
+                    aid, "invalid", "credentials could not be read back")
+                continue
+
+            ok, msg, seen_ip = check_connection(
+                creds.get("api_key") or "", creds.get("api_secret") or "",
+                creds.get("base_url") or "")
+            self.store.set_verification(
+                aid, "verified" if ok else "invalid",
+                "" if ok else msg, seen_ip)
+            log.info("CREDS  account %s %s - %s", aid,
+                     "verified" if ok else "REJECTED", msg)
 
     # ---- dashboard feed -------------------------------------------------
     def _leg_payload(self, leg: Optional[Contract], max_price: float) -> Optional[Dict]:

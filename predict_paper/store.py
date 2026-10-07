@@ -306,6 +306,49 @@ class SupabaseStore:
             self._note_failure("accounts -> %s" % exc)
             return None
 
+    # ---- live credentials -----------------------------------------------
+    def credentials_awaiting_check(self) -> List[Dict[str, Any]]:
+        """Live accounts whose credentials have been saved but not proven.
+
+        The dashboard cannot run this check itself: Delta authorises by IP and
+        the whitelisted address is this host's, not the browser's. So the
+        browser sets the status back to 'unverified' and this picks it up.
+        """
+        try:
+            r = self.session.get("%s/delta_credentials" % self.base,
+                                 timeout=self.timeout,
+                                 params={"select": "account_id",
+                                         "status": "eq.unverified",
+                                         "limit": "20"})
+            if r.status_code >= 400:
+                # Before migration 023 the table does not exist. That is not a
+                # failure worth counting against the store's health.
+                if r.status_code not in (404, 400):
+                    self._note_failure("credentials -> %s" % r.status_code)
+                return []
+            return r.json() or []
+        except Exception as exc:  # noqa: BLE001
+            self._note_failure("credentials -> %s" % exc)
+            return []
+
+    def credentials_decrypted(self, account_id: int) -> Optional[Dict[str, Any]]:
+        """Key, secret and entity for one account. service_role only."""
+        rows = self._post("rpc/get_delta_credentials_decrypted",
+                          {"p_account_id": account_id},
+                          prefer="return=representation")
+        if not rows:
+            return None
+        return rows[0] if isinstance(rows, list) else rows
+
+    def set_verification(self, account_id: int, status: str,
+                         error: str = "", seen_ip: str = "") -> None:
+        self._post("rpc/set_delta_verification", {
+            "p_account_id": account_id,
+            "p_status": status,
+            "p_error": (error or None),
+            "p_seen_ip": (seen_ip or None),
+        })
+
     # ---- recovery -------------------------------------------------------
     def adoptable_positions(self, stale_after_sec: float = 120.0) -> List[Dict[str, Any]]:
         """Open positions left behind by a worker that is no longer running.

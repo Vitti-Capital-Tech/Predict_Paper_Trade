@@ -272,6 +272,46 @@ export async function fetchEvents(runId, limit = 60) {
   return data ?? []
 }
 
+// ------------------------------------------------- live credentials -----
+// The secret goes in through an RPC that encrypts it and never comes back out:
+// there is no read path to it from the browser, by design. What can be read is
+// the key, the last four characters and whether it has been proven to work.
+
+export async function saveDeltaCredentials(accountId, apiKey, apiSecret, baseUrl) {
+  const { data, error } = await supabase.rpc('upsert_delta_credentials', {
+    p_account_id: accountId,
+    p_api_key: apiKey,
+    p_api_secret: apiSecret,
+    p_base_url: baseUrl,
+  })
+  if (error) throw error
+  return data?.[0] ?? null
+}
+
+export async function fetchDeltaCredentials(accountId) {
+  if (!accountId) return null
+  const { data, error } = await supabase.rpc('get_delta_credentials_meta', {
+    p_account_id: accountId,
+  })
+  if (error) throw error
+  return data?.[0] ?? null
+}
+
+/**
+ * Ask the worker to check the credentials.
+ *
+ * Not done here: Delta authorises by IP, and the whitelisted address is the
+ * worker's, not this browser's. A check from here would fail on credentials
+ * that are perfectly good. This sets the status back to unverified; the worker
+ * picks it up within a few seconds and writes the answer back.
+ */
+export async function verifyDeltaCredentials(accountId) {
+  const { error } = await supabase.rpc('request_delta_verification', {
+    p_account_id: accountId,
+  })
+  if (error) throw error
+}
+
 // ------------------------------------------------- strategy settings ----
 // One row (id = 1) the worker polls every few seconds, so a threshold changed
 // here takes effect without an SSH session or a restart.

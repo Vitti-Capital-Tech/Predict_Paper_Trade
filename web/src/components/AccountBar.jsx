@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   createAccount, updateAccount, deleteAccount, countOpenPositions,
+  saveDeltaCredentials,
 } from '../lib/supabase'
 import { PencilIcon, ResetIcon, TrashIcon } from './icons'
 
@@ -56,6 +57,11 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newBalance, setNewBalance] = useState(String(DEFAULT_BALANCE))
+  // Live only. Held just long enough to hand to the RPC that encrypts the
+  // secret; nothing here is kept once the account is made.
+  const [newKey, setNewKey] = useState('')
+  const [newSecret, setNewSecret] = useState('')
+  const [newEntity, setNewEntity] = useState('https://api.india.delta.exchange')
 
   const wrapRef = useRef(null)
 
@@ -137,18 +143,35 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
     })
   }
 
+  const live = mode === 'live'
+
   async function create() {
     const value = Number(newBalance)
     const name = newName.trim() || `Account ${accounts.length + 1}`
     if (!Number.isFinite(value) || value < 0) return
+    // A live account without credentials cannot do anything, and half-made is
+    // the worst state to leave one in - so both are required up front.
+    if (live && (!newKey.trim() || !newSecret.trim())) {
+      setErr('API key and secret are both required for a live account')
+      return
+    }
     await run(async () => {
       // Created on whichever side the switcher is showing, so a live account
       // cannot be made by accident from the paper tab.
       const made = await createAccount(name, value, mode)
+      if (made && live) {
+        // The secret goes straight into the RPC that encrypts it. If this
+        // fails the account exists without credentials, which the panel shows
+        // as "not connected" rather than pretending it is ready.
+        await saveDeltaCredentials(made.id, newKey.trim(), newSecret.trim(),
+                                   newEntity)
+      }
       if (made) onSelect(made.id)
       setCreating(false)
       setNewName('')
       setNewBalance(String(DEFAULT_BALANCE))
+      setNewKey('')
+      setNewSecret('')
       setOpen(false)
     })
   }
@@ -318,6 +341,38 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                     }}
                   />
                 </div>
+                {live && (
+                  <>
+                    <input
+                      value={newKey} className={fieldCls} autoComplete="off"
+                      placeholder="API Key"
+                      onChange={(e) => setNewKey(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Escape') setCreating(false) }}
+                    />
+                    {/* type=password so a shoulder or a screen share does not
+                        read it; it is never displayed again after this. */}
+                    <input
+                      type="password" value={newSecret} className={fieldCls}
+                      autoComplete="new-password" placeholder="API Secret"
+                      onChange={(e) => setNewSecret(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Escape') setCreating(false) }}
+                    />
+                    {/* The allowlist is per account on one entity, so a key
+                        issued on India will not authenticate against global. */}
+                    <select
+                      value={newEntity} className={fieldCls}
+                      onChange={(e) => setNewEntity(e.target.value)}
+                    >
+                      <option value="https://api.india.delta.exchange">Delta India</option>
+                      <option value="https://api.delta.exchange">Delta Global</option>
+                    </select>
+                    <p className="text-[10px] leading-relaxed text-slate-500">
+                      The secret is encrypted before it is stored and cannot be
+                      read back. The connection is checked by the worker, from
+                      the whitelisted IP.
+                    </p>
+                  </>
+                )}
                 <div className="flex justify-end gap-1.5 pt-0.5">
                   <button onClick={() => setCreating(false)}
                           className="px-2 py-1 text-[11px] text-slate-500

@@ -5,6 +5,7 @@ import PortfolioTabs from './components/PortfolioTabs'
 import StrategyPanel from './components/StrategyPanel'
 import AccountBar from './components/AccountBar'
 import Logo from './components/Logo'
+import LiveConnection from './components/LiveConnection'
 
 function Setup() {
   return (
@@ -217,6 +218,7 @@ export default function App() {
             one that looks live and is not - or looks paper and is not. The
             worker refuses live accounts outright today; it fills against a
             simulated book and nothing it does reaches the exchange. */}
+        {isLive && <LiveConnection account={account} workerLive={workerLive} />}
         {isLive && (
           <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">
             <p className="text-xs font-semibold text-rose-300">
