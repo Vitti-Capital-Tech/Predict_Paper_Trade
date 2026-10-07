@@ -879,7 +879,6 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
   // Which trades the figures describe. Mixing hand-placed trades into a
   // round win rate makes it meaningless: a manual single leg is not a
   // round the strategy played.
-  const [scope, setScope] = useState('strategy')
   const [positions, setPositions] = useState([])
   const [marks, setMarks] = useState({})
   const [error, setError] = useState(null)
@@ -1104,10 +1103,12 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
 
   // Realised performance, from the same helper the CLI report uses so the two
   // can never disagree.
-  const scoped = useMemo(() => positions.filter(
-    (p) => scope === 'all' ? true
-      : scope === 'manual' ? p.role === 'manual'
-        : p.role !== 'manual'), [positions, scope])
+  // Every trade on the account. The figures used to be split by strategy /
+  // manual / all, which mattered while a hand-placed trade sat next to a
+  // bot one in the same book. A live account cannot take a manual trade at
+  // all, so the split became a control that only ever hid some of the
+  // answer - and the headline numbers should be the account's, whole.
+  const scoped = positions
 
   const perf = useMemo(
     () => summarise(scoped, Number(account?.starting_balance) || 0),
@@ -1134,19 +1135,6 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
           Performance
         </h3>
-        <div className="flex gap-0.5 rounded-lg border border-white/10 bg-ink-800 p-0.5">
-          {[['strategy', 'Strategy'], ['manual', 'Manual'], ['all', 'All']].map(
-            ([k, label]) => (
-              <button
-                key={k} onClick={() => setScope(k)}
-                className={`rounded-md px-2.5 py-1 text-[11px] transition-colors ${
-                  scope === k ? 'bg-sky-500/20 text-sky-300'
-                    : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                {label}
-              </button>
-            ))}
-        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 border-b border-white/5 px-4 pb-3 pt-2
