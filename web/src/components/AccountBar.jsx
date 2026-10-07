@@ -25,15 +25,6 @@ const money = (v) =>
 
 const DEFAULT_BALANCE = 10000
 
-/** How a live account's connection reads at a glance. */
-const CONN = {
-  verified:   { dot: 'bg-emerald-400', hint: 'Connected to Delta' },
-  verifying:  { dot: 'bg-sky-400 animate-pulse', hint: 'Checking the connection…' },
-  unverified: { dot: 'bg-amber-400 animate-pulse', hint: 'Waiting for the worker to check…' },
-  invalid:    { dot: 'bg-rose-500', hint: 'Not connected — verify to see why' },
-  none:       { dot: 'bg-slate-600', hint: 'No API key saved' },
-}
-
 function IconButton({ title, onClick, tone = 'slate', children,
                      disabled = false, label }) {
   const tones = {
@@ -253,17 +244,6 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
     }
   }, [credStatus, liveCred?.last_error, liveCred?.seen_ip, liveCred?.balance, toast])
 
-  async function toggleLive(a) {
-    const next = !a.live_enabled
-    await run(async () => {
-      await updateAccount(a.id, { live_enabled: next })
-      toast(next
-        ? `${a.name} is LIVE — the worker will send real orders`
-        : `${a.name} stopped — no further orders will be sent`,
-        next ? 'err' : 'ok')
-    })
-  }
-
   async function verifyConnection(a) {
     setVerifyingId(a.id)
     try {
@@ -376,25 +356,22 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
       {/* Out here rather than inside the dropdown: it is the one control
           that decides whether real orders leave the machine, and it should
           not need a menu opened to see its state - or to turn it off. */}
+      {/* A readout, not a control. Two switches that are AND-ed in the
+          worker are one decision to the person reading them, and the one
+          that reads as a decision is the strategy's. This says what that
+          decision currently means for real money. */}
       {live && account && liveCred?.status === 'verified' && (
-        <button
-          type="button"
+        <span
           title={account.live_enabled
-            ? 'Live trading is ON — click to stop sending orders'
-            : 'Live trading is OFF — no orders are sent'}
-          aria-label="Live trading"
-          aria-pressed={!!account.live_enabled}
-          onClick={() => toggleLive(account)}
-          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5
-                      text-[11px] font-semibold transition-colors ${
+            ? 'Real orders are being sent — turn the strategy off to stop'
+            : 'No orders are being sent'}
+          className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${
             account.live_enabled
-              ? 'border-rose-500/50 bg-rose-500/20 text-rose-300 hover:bg-rose-500/30'
-              : 'border-white/10 bg-ink-800 text-slate-500 hover:border-white/25'}`}
+              ? 'border-rose-500/50 bg-rose-500/20 text-rose-300'
+              : 'border-white/10 bg-ink-800 text-slate-500'}`}
         >
-          <span className={`h-1.5 w-1.5 rounded-full ${
-            account.live_enabled ? 'bg-rose-400 animate-pulse' : 'bg-slate-600'}`} />
           {account.live_enabled ? 'LIVE' : 'OFF'}
-        </button>
+        </span>
       )}
 
       <button
@@ -402,13 +379,6 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
         className="flex items-center gap-2 rounded-lg border border-white/10 bg-ink-800
                    px-3 py-1.5 transition-colors hover:border-white/20"
       >
-        {/* Connection state lives here now that the panel is gone. On a live
-            account this is the only standing sign that it still reaches the
-            exchange; on paper there is nothing to connect to. */}
-        {live && credStatus && (
-          <span title={CONN[credStatus]?.hint ?? ''}
-                className={`h-2 w-2 shrink-0 rounded-full ${CONN[credStatus]?.dot ?? ''}`} />
-        )}
         <span className="text-xs text-slate-400">{account?.name ?? 'Account'}</span>
         <span className="nums text-xs font-semibold text-slate-100">
           {money(account?.balance)}

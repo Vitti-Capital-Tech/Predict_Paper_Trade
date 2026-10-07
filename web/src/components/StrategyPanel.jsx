@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchStrategyConfig, updateStrategyConfig, fetchAllStrategyConfigs,
+  updateAccount,
 } from '../lib/supabase'
 import { fetchCandles, indexSymbolFor } from '../lib/delta'
 import { atrNow, atrSeries, barSeconds } from '../lib/atr'
@@ -260,7 +261,7 @@ function Toggle({ on, onChange, label }) {
 
 export default function StrategyPanel({ account, accounts = [], workerLive,
                                        onSlippageChange, onUnderlyingChange,
-                                       onAtrChange }) {
+                                       onAtrChange, onAccountChanged }) {
   const [saved, setSaved] = useState(null)   // what the database holds
   const [draft, setDraft] = useState(null)   // what the form shows
   const [busy, setBusy] = useState(false)
@@ -502,7 +503,26 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
             role="switch"
             aria-checked={armed}
             aria-label="Start automated trading"
-            onClick={() => persist({ enabled: !armed })}
+            onClick={async () => {
+              const next = !armed
+              // One switch, two gates. The worker requires `enabled` and
+              // `live_enabled` together, so asking for them separately made
+              // an off state that looks on - and a second control whose only
+              // job was to agree with the first.
+              await persist({ enabled: next })
+              if (isLive && account?.id) {
+                try {
+                  await updateAccount(account.id, { live_enabled: next })
+                  onAccountChanged?.()
+                } catch { /* the strategy switch already stopped it */ }
+              }
+              if (isLive) {
+                toast(next
+                  ? `${account?.name} is LIVE — real orders will be sent`
+                  : `${account?.name} stopped — no further orders`,
+                  next ? 'err' : 'ok')
+              }
+            }}
             disabled={busy}
             className="flex items-center gap-2.5 rounded-lg border border-white/10 bg-ink-800
                        px-3 py-1.5 transition-colors hover:border-white/25

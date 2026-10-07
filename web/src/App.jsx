@@ -221,7 +221,8 @@ export default function App() {
         <StrategyPanel account={account} accounts={accounts} workerLive={workerLive}
                        onSlippageChange={setSlippage}
                        onUnderlyingChange={setBotAsset}
-                       onAtrChange={setAtrInfo} />
+                       onAtrChange={setAtrInfo}
+                       onAccountChanged={loadAccounts} />
         <TradePanel
           atrInfo={atrInfo}
           account={account}
