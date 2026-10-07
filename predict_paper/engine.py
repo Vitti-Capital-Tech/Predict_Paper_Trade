@@ -711,24 +711,42 @@ class Engine:
             return
 
         for leg, fill in planned:
-            # Tagged with the account, so the trade debits and credits that
-            # balance and shows up in its portfolio. Bot entries used to carry
-            # no account at all, which left them invisible in a panel that
-            # filters by one.
-            existing = self._open_leg(aid, rnd.round_id, leg.contract.symbol)
-            if existing is not None:
-                # A leg bought over several ticks is one position at the
-                # average of what was paid, not one position per fill.
-                self.portfolio.add_to_position(existing, fill, now)
-            else:
-                self.portfolio.open_position(
-                    rnd.round_id, leg.contract.symbol, leg.role,
-                    leg.contract.side, leg.contract.strike, fill, now,
-                    decision.spot, atr, account_id=aid)
+            # Marked as held BEFORE it is recorded, and deliberately so. The
+            # fill has already happened - on a live account the money is
+            # spent - so the leg is held whether or not the bookkeeping that
+            # follows succeeds. Recording first meant one missing attribute
+            # threw mid-record, aborted the cycle before this line, and left
+            # the next cycle believing the leg was never bought: it bought it
+            # again, every few seconds, with real money. Fail towards not
+            # trading, never towards trading twice.
             self._held_symbols.add((aid, leg.contract.symbol))
             self._held_roles.setdefault((aid, rnd.round_id), set()).add(leg.role)
             self._held_strikes.setdefault((aid, rnd.round_id), set()).add(
                 float(leg.contract.strike))
+
+            # Tagged with the account, so the trade debits and credits that
+            # balance and shows up in its portfolio. Bot entries used to carry
+            # no account at all, which left them invisible in a panel that
+            # filters by one.
+            try:
+                existing = self._open_leg(aid, rnd.round_id, leg.contract.symbol)
+                if existing is not None:
+                    # A leg bought over several ticks is one position at the
+                    # average of what was paid, not one position per fill.
+                    self.portfolio.add_to_position(existing, fill, now)
+                else:
+                    self.portfolio.open_position(
+                        rnd.round_id, leg.contract.symbol, leg.role,
+                        leg.contract.side, leg.contract.strike, fill, now,
+                        decision.spot, atr, account_id=aid)
+            except Exception:  # noqa: BLE001
+                # Contained to this leg. A position that exists on the
+                # exchange but not in this table is a reconciliation problem;
+                # letting the exception escape made it a repeat-buying one.
+                log.exception(
+                    "RECORD FAILED %s %s qty=%s @ %s - the fill happened and is "
+                    "NOT in the table; reconcile by hand",
+                    acct.name, leg.contract.symbol, fill.qty, fill.avg_price)
 
     # ---- manual orders from the trade panel -----------------------------
     def process_manual_orders(self, by_symbol: Dict[str, Contract],

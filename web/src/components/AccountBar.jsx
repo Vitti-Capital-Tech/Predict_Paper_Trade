@@ -373,6 +373,30 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
 
   return (
     <div className="relative flex items-center gap-2" ref={wrapRef}>
+      {/* Out here rather than inside the dropdown: it is the one control
+          that decides whether real orders leave the machine, and it should
+          not need a menu opened to see its state - or to turn it off. */}
+      {live && account && liveCred?.status === 'verified' && (
+        <button
+          type="button"
+          title={account.live_enabled
+            ? 'Live trading is ON — click to stop sending orders'
+            : 'Live trading is OFF — no orders are sent'}
+          aria-label="Live trading"
+          aria-pressed={!!account.live_enabled}
+          onClick={() => toggleLive(account)}
+          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5
+                      text-[11px] font-semibold transition-colors ${
+            account.live_enabled
+              ? 'border-rose-500/50 bg-rose-500/20 text-rose-300 hover:bg-rose-500/30'
+              : 'border-white/10 bg-ink-800 text-slate-500 hover:border-white/25'}`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${
+            account.live_enabled ? 'bg-rose-400 animate-pulse' : 'bg-slate-600'}`} />
+          {account.live_enabled ? 'LIVE' : 'OFF'}
+        </button>
+      )}
+
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex items-center gap-2 rounded-lg border border-white/10 bg-ink-800
@@ -517,28 +541,6 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                         {/* Rechecking is the one live-account action worth a
                             button of its own: keys get revoked and allowlists
                             get edited, and nothing tells you until you ask. */}
-                        {/* Sending orders is a separate decision from being
-                            connected, and the more serious of the two - so it
-                            is its own switch, not a consequence of saving a
-                            key. */}
-                        {live && liveCred?.status === 'verified' && (
-                          <button
-                            type="button"
-                            title={a.live_enabled
-                              ? 'Live trading is ON — click to stop sending orders'
-                              : 'Live trading is OFF — no orders are sent'}
-                            aria-label="Live trading"
-                            aria-pressed={!!a.live_enabled}
-                            onClick={(e) => { e.stopPropagation(); toggleLive(a) }}
-                            className={`rounded-md border px-1.5 py-1 text-[10px]
-                                        font-semibold transition-colors ${
-                              a.live_enabled
-                                ? 'border-rose-500/50 bg-rose-500/20 text-rose-300'
-                                : 'border-white/10 text-slate-500 hover:border-white/30'}`}
-                          >
-                            {a.live_enabled ? 'LIVE' : 'OFF'}
-                          </button>
-                        )}
                         {live && (() => {
                           // Spinning from the click until the worker answers,
                           // whichever of the two knows first.

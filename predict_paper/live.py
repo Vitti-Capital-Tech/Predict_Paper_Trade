@@ -41,6 +41,13 @@ def dry_run() -> bool:
 class LiveFill:
     """What came back, shaped like the paper engine's Fill.
 
+    Every field `fills.Fill` carries is here, including the ones that only
+    describe a simulated walk through the book. The portfolio reads them all
+    when it records a position, and a missing one raised mid-record *after*
+    the order had already filled on the exchange - which aborted the cycle
+    before the leg could be marked as held, so the next cycle bought it
+    again. Fourteen times, before it was stopped.
+
     `filled` is false for a refusal and for a dry run alike: in both cases no
     position exists, and the one thing worse than not trading would be
     recording one that does not.
@@ -53,6 +60,18 @@ class LiveFill:
     # True when the exchange already had this exact order. Not an error: it
     # means the intended order is resting, and the guard did its job.
     duplicate: bool = False
+
+    # The book-walk fields. There is no walk here - the exchange matched the
+    # order - so the top is the price asked for and the slippage against it is
+    # whatever the fill came back better or worse by.
+    top_price: Optional[float] = None
+    slippage_vs_top: float = 0.0
+    levels_consumed: int = 0
+    requested_qty: float = 0.0
+
+    @property
+    def notional(self) -> float:
+        return self.qty * self.avg_price
 
 
 class LiveExecutor:
@@ -135,7 +154,9 @@ class LiveExecutor:
 
         log.info("LIVE   %-14s BOUGHT %-28s qty=%-6.0f @ %.4f  [%s]",
                  self.name, symbol, filled, avg, order["client_order_id"])
-        return LiveFill(True, qty=filled, avg_price=avg, order_id=oid)
+        return LiveFill(True, qty=filled, avg_price=avg, order_id=oid,
+                        top_price=float(price), slippage_vs_top=avg - float(price),
+                        levels_consumed=1, requested_qty=float(qty))
 
 
 def _f(v: Any) -> float:
