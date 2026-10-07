@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fetchDeltaCredentials, verifyDeltaCredentials } from '../lib/supabase'
+import {
+  fetchDeltaCredentials, verifyDeltaCredentials, saveDeltaCredentials,
+} from '../lib/supabase'
+import { Labelled, Secret } from './Fields'
+
+const DELTA_GLOBAL = 'https://api.delta.exchange'
 
 /**
  * Whether a live account can actually reach Delta.
@@ -25,6 +30,14 @@ export default function LiveConnection({ account, workerLive }) {
   const [missing, setMissing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Keys get rotated, and an account can end up without them if saving failed
+  // after it was created - so attaching them later has to be possible here,
+  // not only in the form that makes the account.
+  const [entering, setEntering] = useState(false)
+  const [key, setKey] = useState('')
+  const [secret, setSecret] = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [showSecret, setShowSecret] = useState(false)
 
   const accountId = account?.id ?? null
 
@@ -82,6 +95,26 @@ export default function LiveConnection({ account, workerLive }) {
     }
   }
 
+  const saveCreds = async () => {
+    if (!key.trim() || !secret.trim()) {
+      setError('API key and secret are both required')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await saveDeltaCredentials(accountId, key.trim(), secret.trim(), DELTA_GLOBAL)
+      setKey(''); setSecret(''); setEntering(false)
+      setShowKey(false); setShowSecret(false)
+      // Saving marks them unverified; the worker picks that up on its own.
+      load()
+    } catch (e) {
+      setError(e.message ?? String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <Shell>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -96,6 +129,16 @@ export default function LiveConnection({ account, workerLive }) {
             </p>
           </div>
         </div>
+
+        {!entering && (
+          <button
+            onClick={() => { setEntering(true); setError(null) }}
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-400
+                       transition-colors hover:border-white/25 hover:text-slate-200"
+          >
+            {cred ? 'Replace key' : 'Add credentials'}
+          </button>
+        )}
 
         {cred && (
           <button
@@ -133,6 +176,32 @@ export default function LiveConnection({ account, workerLive }) {
         </div>
       )}
 
+      {entering && (
+        <div className="mt-3 space-y-1.5 border-t border-white/5 pt-3">
+          <Labelled label="API Key">
+            <Secret value={key} onChange={(e) => setKey(e.target.value)}
+                    show={showKey} onToggle={() => setShowKey((v) => !v)}
+                    cls={FIELD} name="live-key" />
+          </Labelled>
+          <Labelled label="API Secret">
+            <Secret value={secret} onChange={(e) => setSecret(e.target.value)}
+                    show={showSecret} onToggle={() => setShowSecret((v) => !v)}
+                    cls={FIELD} name="live-secret" />
+          </Labelled>
+          <div className="flex justify-end gap-1.5 pt-0.5">
+            <button onClick={() => { setEntering(false); setKey(''); setSecret('') }}
+                    className="px-2 py-1 text-[11px] text-slate-500 hover:text-slate-300">
+              Cancel
+            </button>
+            <button onClick={saveCreds} disabled={busy}
+                    className="rounded-md bg-sky-500 px-2.5 py-1 text-[11px] font-semibold
+                               text-white hover:bg-sky-400 disabled:opacity-50">
+              {busy ? 'Saving…' : 'Save and check'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {error && <p className="mt-2 text-[11px] text-rose-300">{error}</p>}
 
       <p className="mt-2.5 border-t border-white/5 pt-2 text-[10px] leading-relaxed text-slate-500">
@@ -143,6 +212,9 @@ export default function LiveConnection({ account, workerLive }) {
     </Shell>
   )
 }
+
+const FIELD = `nums w-full rounded-md border border-white/10 bg-ink-800 px-2 py-1
+                text-xs text-slate-100 outline-none focus:border-sky-500/50`
 
 function Shell({ children }) {
   return (

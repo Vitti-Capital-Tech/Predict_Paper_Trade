@@ -72,7 +72,10 @@ create or replace function public.upsert_delta_credentials(
   p_api_secret text,
   p_base_url   text default 'https://api.delta.exchange'
 )
-returns table (account_id bigint, key_last4 text, status text)
+-- Output names are prefixed so they cannot collide with the table's own
+-- columns. RETURNS TABLE declares them as variables, and an unprefixed
+-- `account_id` makes `on conflict (account_id)` below ambiguous.
+returns table (out_account_id bigint, out_key_last4 text, out_status text)
 language plpgsql security definer set search_path = ''
 as $$
 declare v_key text;
@@ -111,7 +114,8 @@ begin
 
   return query
     select c.account_id, c.key_last4, c.status
-      from public.delta_credentials c where c.account_id = p_account_id;
+      from public.delta_credentials c
+     where c.account_id = p_account_id;
 end $$;
 
 revoke all on function public.upsert_delta_credentials(bigint, text, text, text)
