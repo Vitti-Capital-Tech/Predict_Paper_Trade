@@ -16,9 +16,9 @@ from .delta import DeltaClient
 from .fills import FillEngine
 from .indicators import AtrGate
 from .portfolio import Portfolio, Position
-from .rounds import Contract, Round, build_rounds
+from .rounds import Contract, Round, build_rounds, parse_symbol
 from .delta_auth import DeltaAuthClient, SETTLEMENT_ASSETS, check_connection
-from .live import LiveExecutor, dry_run
+from .live import LiveExecutor, LiveFill, dry_run
 from .store import build_store
 from .strategy import Strategy
 
@@ -107,6 +107,9 @@ WINGS = ("wing_low", "wing_high")
 # How often a live account's balance is re-read from the exchange. Often
 # enough to be current on a screen, rare enough not to spend the rate limit
 # on a number that changes only when something settles.
+# How often the record is checked against the exchange's own view.
+LIVE_RECONCILE_SEC = 60.0
+
 LIVE_BALANCE_SEC = 30.0
 
 TOPUP_FLOOR_FRAC = 0.10
@@ -168,6 +171,8 @@ class Engine:
         self._balance_warned: set = set()
         self._creds_at: float = 0.0
         self._balance_at: float = 0.0
+        self._reconcile_at: float = 0.0
+        self._adopted_live: set = set()
         # Authenticated clients for live accounts, kept whether or not the
         # account is armed: the balance is worth showing even when nothing is
         # being sent.
@@ -963,6 +968,7 @@ class Engine:
         self.refresh_remote_config(now_ts)
         self.verify_pending_credentials(now_ts)
         self.sync_live_balances(now_ts)
+        self.reconcile_live_positions(now_ts)
         self.maybe_adopt(now_ts)
 
         tickers = self.client.binary_tickers()
@@ -1147,6 +1153,107 @@ class Engine:
                 acct = self.accounts.get(aid)
                 if acct is not None:
                     acct.balance = total
+
+    def reconcile_live_positions(self, now_ts: float) -> None:
+        """Make the record match the exchange.
+
+        Delta is the authority on what a live account holds; this table is a
+        copy, and a copy can be wrong. It was: fourteen orders filled and
+        every one failed to record, so the dashboard showed nothing while the
+        account held seventy contracts. Nothing noticed, because nothing was
+        looking.
+
+        Two directions, treated differently on purpose.
+
+        A position Delta has that this side does not is adopted outright -
+        it is real, it was paid for, and showing it is strictly better than
+        pretending it does not exist. A size that disagrees is corrected to
+        Delta's.
+
+        A position this side has that Delta does not is only reported. It
+        usually means settlement, which `settle_expired` handles by expiry
+        and does properly. Closing it here on the strength of one read would
+        turn a timeout or a bad response into destroyed bookkeeping.
+        """
+        if (now_ts - self._reconcile_at) < LIVE_RECONCILE_SEC:
+            return
+        self._reconcile_at = now_ts
+        now = datetime.now(timezone.utc)
+
+        for aid, client in list(self._live_clients.items()):
+            try:
+                remote = client.open_positions() or []
+            except Exception as exc:  # noqa: BLE001
+                log.warning("LIVE   reconcile read failed for account %s: %s",
+                            aid, exc)
+                continue
+
+            on_delta: Dict[str, float] = {}
+            entry_of: Dict[str, float] = {}
+            for p in remote:
+                if not isinstance(p, dict):
+                    continue
+                sym = p.get("product_symbol") or ""
+                size = abs(_num(p.get("size")))
+                if not sym or size <= 0:
+                    continue
+                on_delta[sym] = size
+                entry_of[sym] = _num(p.get("entry_price"))
+
+            ours = {p.symbol: p for p in self.portfolio.open_positions
+                    if p.account_id == aid}
+
+            # Delta has it, we do not - or we have the wrong size.
+            for sym, size in on_delta.items():
+                held = ours.get(sym)
+                if held is not None and abs(_num(held.qty) - size) <= 0.001:
+                    continue
+                meta = parse_symbol(sym)
+                if meta is None:
+                    continue
+                round_id = "%s-%s" % (meta["asset"], meta["expiry_code"])
+                price = entry_of.get(sym) or 0.0
+
+                if held is None:
+                    log.warning("LIVE   ADOPT %s qty=%.0f @ %.4f - on Delta, "
+                                "missing here", sym, size, price)
+                    fill = LiveFill(True, qty=size, avg_price=price,
+                                    top_price=price, requested_qty=size,
+                                    levels_consumed=1)
+                    try:
+                        self.portfolio.open_position(
+                            round_id, sym, "adopted", meta["side"],
+                            meta["strike"], fill, now, None, None,
+                            account_id=aid)
+                    except Exception:  # noqa: BLE001
+                        log.exception("LIVE   could not adopt %s", sym)
+                        continue
+                else:
+                    log.warning("LIVE   SIZE %s here=%.0f delta=%.0f - "
+                                "correcting to Delta", sym, _num(held.qty), size)
+                    held.qty = size
+                    if price:
+                        held.entry_price = price
+
+                # Whatever the exchange holds counts as held, so the strategy
+                # does not try to open it a second time.
+                self._held_symbols.add((aid, sym))
+                self._held_strikes.setdefault((aid, round_id), set()).add(
+                    float(meta["strike"]))
+
+            # We have it, Delta does not. Reported only - see the docstring.
+            for sym, held in ours.items():
+                if sym in on_delta:
+                    self._adopted_live.discard((aid, sym))
+                    continue
+                expiry = self._expiry_by_symbol.get(sym)
+                if expiry is not None and (expiry - now).total_seconds() <= 0:
+                    continue        # expired; settlement is settle_expired's job
+                if (aid, sym) in self._adopted_live:
+                    continue
+                self._adopted_live.add((aid, sym))
+                log.warning("LIVE   ORPHAN %s is open here but not on Delta - "
+                            "check by hand; nothing closed automatically", sym)
 
     # ---- dashboard feed -------------------------------------------------
     def _leg_payload(self, leg: Optional[Contract], max_price: float) -> Optional[Dict]:
