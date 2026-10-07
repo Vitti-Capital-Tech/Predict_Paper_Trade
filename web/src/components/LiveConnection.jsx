@@ -146,12 +146,6 @@ export default function LiveConnection({ account, workerLive }) {
       )}
 
       {error && <p className="mt-2 text-[11px] text-rose-300">{error}</p>}
-
-      <p className="mt-2.5 border-t border-white/5 pt-2 text-[10px] leading-relaxed text-slate-500">
-        Connected means the key, the secret, the clock and the IP allowlist all
-        check out. It does not mean this account trades: the worker only paper
-        trades today and skips live accounts entirely.
-      </p>
     </Shell>
   )
 }
