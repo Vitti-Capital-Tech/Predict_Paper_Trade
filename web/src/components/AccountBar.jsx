@@ -116,7 +116,10 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
   const [newSecret, setNewSecret] = useState('')
   // Not a choice: Predict's markets are listed on the global entity only.
   const DELTA_GLOBAL = 'https://api.delta.exchange'
-  const [showSecrets, setShowSecrets] = useState(false)
+  // One per field: revealing the key to check it should not also put the
+  // secret on screen.
+  const [showKey, setShowKey] = useState(false)
+  const [showSecret, setShowSecret] = useState(false)
   // A live account is not created until its credentials have been proven, so
   // the form holds the verdict - and the balance Delta reported - until then.
   const [check, setCheck] = useState(null)   // { id, status, balance, message, seen_ip }
@@ -277,7 +280,8 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
       setNewKey('')
       setNewSecret('')
       setCheck(null)
-      setShowSecrets(false)
+      setShowKey(false)
+      setShowSecret(false)
       setOpen(false)
     })
   }
@@ -464,14 +468,14 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                     <Labelled label="API Key">
                       <Secret
                         value={newKey} onChange={onCredChange(setNewKey)}
-                        show={showSecrets} onToggle={() => setShowSecrets((v) => !v)}
+                        show={showKey} onToggle={() => setShowKey((v) => !v)}
                         cls={fieldCls} name="delta-key"
                       />
                     </Labelled>
                     <Labelled label="API Secret">
                       <Secret
                         value={newSecret} onChange={onCredChange(setNewSecret)}
-                        show={showSecrets} onToggle={() => setShowSecrets((v) => !v)}
+                        show={showSecret} onToggle={() => setShowSecret((v) => !v)}
                         cls={fieldCls} name="delta-secret"
                       />
                     </Labelled>
