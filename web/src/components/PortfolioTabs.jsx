@@ -1165,11 +1165,16 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
           tone={perf.rounds ? perf.avgPerRound : undefined}
           sub={perf.rounds ? `${fmt.pct(perf.legWinRate, 0)} of legs won` : ''}
         />
-        <Stat
-          label="Slippage paid"
-          value={fmt.usd(perf.slippageCost)}
-          sub={perf.totalCost ? `${fmt.pct(100 * perf.slippageCost / perf.totalCost)} of cost` : ''}
-        />
+        {/* Paper only. Live orders go in as limits, so a fill can never be
+            worse than the price asked for and this reads $0.00 whatever
+            happens - a figure that cannot vary is not a measurement. */}
+        {mode !== 'live' && (
+          <Stat
+            label="Slippage paid"
+            value={fmt.usd(perf.slippageCost)}
+            sub={perf.totalCost ? `${fmt.pct(100 * perf.slippageCost / perf.totalCost)} of cost` : ''}
+          />
+        )}
         <Stat
           label="Max drawdown"
           value={fmt.usd(perf.maxDrawdown)}

@@ -382,6 +382,7 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
     )
   }
 
+  const isLive = (account?.mode ?? 'paper') === 'live'
   const armed = Boolean(saved?.enabled)
   const trading = armed && workerLive
   // The same conversion the worker uses (Config.max_price_for_odds), for both
@@ -747,20 +748,36 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
                    onChange={(v) => set('max_spread_frac', v)} />
             </Field>
 
+            {/* One number, two honest names. On paper it is a tolerance:
+                the fill is walked through the book and rejected if it drifts
+                this far past the touch. On the exchange the same number is
+                the limit price itself - quote plus this on a buy, bid minus
+                this on a sell - so nothing can fill beyond it and there is no
+                slippage left to tolerate. Calling it tolerance there would
+                describe a check that cannot fire. */}
             <div className="col-span-2">
               <div className="flex items-baseline justify-between">
-                <span className="text-[11px] text-slate-500">Slippage tolerance</span>
+                <span className="text-[11px] text-slate-500">
+                  {isLive ? 'Limit offset from quote' : 'Slippage tolerance'}
+                </span>
                 <span className="nums text-sm font-semibold text-sky-300">
                   ${Number(draft.max_slippage).toFixed(2)}
                 </span>
               </div>
               <input
                 type="range" min="0.01" max="0.10" step="0.01"
-                aria-label="Slippage tolerance"
+                aria-label={isLive ? 'Limit offset from quote' : 'Slippage tolerance'}
                 value={draft.max_slippage}
                 onChange={(e) => set('max_slippage', Number(e.target.value))}
                 className="slider-theme mt-1.5 w-full"
               />
+              {isLive && (
+                <p className="mt-1 text-[10px] leading-relaxed text-slate-600">
+                  How far from the quote the order may sit: buys go in at the
+                  ask plus this, sells at the bid minus it. Nothing fills
+                  beyond it.
+                </p>
+              )}
               <div className="nums flex justify-between text-[10px] text-slate-600">
                 <span>$0.01</span>
                 <span>$0.10</span>
