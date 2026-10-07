@@ -292,8 +292,14 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
       setDraft(row)
       onSlippageChange?.(Number(row.max_slippage))
       onUnderlyingChange?.(row.underlying || 'BTC')
+      return true
     } catch (e) {
       setError(e.message ?? String(e))
+      // Returned rather than thrown: the panel's own Save shows the message
+      // in the line below it, but a caller that needs to know whether the
+      // write landed - the copy dialog, which closes on success - cannot
+      // tell that from a promise that always resolves.
+      return false
     } finally {
       setBusy(false)
     }
@@ -845,12 +851,19 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
         accounts={accounts}
         configs={allConfigs}
         saved={saved}
-        onImport={(patch, from, cross) => {
-          setDraft((d) => ({ ...d, ...patch }))
-          setOpen(true)
-          toast(cross
-            ? `Copied from ${from} — ATR and point settings kept`
-            : `Copied from ${from} — review and Save`, 'ok')
+        busy={busy}
+        onCopy={async (patch, from) => {
+          // Saved on confirming rather than left as a draft: the confirmation
+          // listed every value that changes, so a second review step would be
+          // reading the same thing twice.
+          const n = Object.keys(patch).length
+          const ok = await persist(patch)
+          if (ok) {
+            setImportOpen(false)
+            toast(`Copied ${n} settings from ${from} and saved`, 'ok')
+          } else {
+            toast('Could not save the copied settings', 'err')
+          }
         }}
       />
     </div>
