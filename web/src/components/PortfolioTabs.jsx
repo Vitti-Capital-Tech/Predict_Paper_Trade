@@ -461,7 +461,7 @@ function FillRows({ fills, open }) {
  * P&L to the end of that day is the number that can be stated per day and
  * that adds up across them.
  */
-function DailyTable() {
+function DailyTable({ mode = 'paper' }) {
   const [rows, setRows] = useState(null)
   const [accounts, setAccounts] = useState([])
   const [error, setError] = useState(null)
@@ -479,12 +479,15 @@ function DailyTable() {
     return () => { alive = false }
   }, [])
 
-  const { days, byDay, closing } = useMemo(() => {
-    // Only accounts that still exist. Positions outlive the account they
-    // belonged to, so a deleted account leaves its days behind in the view —
-    // and those would render as a run of empty rows above the real ones,
-    // reading as "nothing happened" rather than "not this account".
-    const live = new Set(accounts.map((a) => a.id))
+  const { days, byDay, closing, shown } = useMemo(() => {
+    // Only accounts that still exist, and only the ones on this side.
+    // Positions outlive the account they belonged to, so a deleted account
+    // leaves its days behind in the view — and those would render as a run of
+    // empty rows above the real ones, reading as "nothing happened" rather
+    // than "not this account". Paper and live are different money, so putting
+    // both in one comparison says nothing worth reading.
+    const shown = accounts.filter((a) => (a.mode ?? 'paper') === mode)
+    const live = new Set(shown.map((a) => a.id))
     const mine = (rows ?? []).filter((r) => live.has(r.account_id))
     const days = [...new Set(mine.map((r) => r.day))].sort()
     const byDay = new Map()
@@ -495,7 +498,7 @@ function DailyTable() {
     // Running balance per account, walked forward so a day with no trades
     // carries the previous close rather than showing a gap.
     const closing = new Map()
-    for (const a of accounts) {
+    for (const a of shown) {
       let bal = Number(a.starting_balance ?? 0)
       const series = new Map()
       for (const d of days) {
@@ -504,8 +507,8 @@ function DailyTable() {
       }
       closing.set(a.id, series)
     }
-    return { days, byDay, closing }
-  }, [rows, accounts])
+    return { days, byDay, closing, shown }
+  }, [rows, accounts, mode])
 
   if (error) {
     return (
@@ -541,7 +544,7 @@ function DailyTable() {
         <thead className="text-[11px] uppercase tracking-wide text-slate-500">
           <tr className="border-b border-white/5">
             <th className="px-3 py-2 text-left font-medium">Day</th>
-            {accounts.map((a) => (
+            {shown.map((a) => (
               <th key={a.id} className="px-3 py-2 text-right font-medium"
                   title={`Started at ${money(Number(a.starting_balance))}`}>
                 {a.name}
@@ -555,7 +558,7 @@ function DailyTable() {
               <td className="nums whitespace-nowrap px-3 py-2 text-slate-300">
                 {dayLabel(d)}
               </td>
-              {accounts.map((a) => {
+              {shown.map((a) => {
                 const cell = byDay.get(d)?.get(a.id)
                 const bal = closing.get(a.id)?.get(d)
                 const pnl = Number(cell?.pnl ?? 0)
@@ -871,7 +874,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
 }
 
 export default function PortfolioTabs({ account, accountId, slippage = 0.05,
-                                        refreshKey = 0 }) {
+                                        refreshKey = 0, mode = 'paper' }) {
   const [tab, setTab] = useState('positions')
   // Which trades the figures describe. Mixing hand-placed trades into a
   // round win rate makes it meaningless: a manual single leg is not a
@@ -1192,7 +1195,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         <div className="flex gap-6">
         {[['positions', 'Positions', open.length],
           ['trades', 'Recent Trades', closed.length],
-          ['daily', 'Daily · all accounts', 0]].map(([key, label, n]) => (
+          ['daily', mode === 'live' ? 'Daily · live accounts'
+                                    : 'Daily · paper accounts', 0]].map(([key, label, n]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -1267,7 +1271,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
             </div>
           </>
         ) : tab === 'daily' ? (
-          <DailyTable />
+          <DailyTable mode={mode} />
         ) : (
           <TradesTable positions={closed} atrFor={atrFor} atrLabel={atrLabel} />
         )}
