@@ -229,6 +229,7 @@ export default function App() {
           slippage={slippage}
           onSlippageChange={setSlippage}
           botAsset={botAsset}
+          mode={mode}
           accountId={accountId}
           onOrderResolved={() => setTradeTick((n) => n + 1)}
         />

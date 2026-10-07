@@ -813,6 +813,20 @@ class Engine:
             symbol = order.get("symbol")
             contract = by_symbol.get(symbol)
 
+            # This path fills against a simulated book. On a live account that
+            # would write a position for money that never moved - which then
+            # shows as real on the screen and argues with reconciliation,
+            # because Delta has never heard of it. Refused outright until
+            # manual orders can be sent to the exchange properly.
+            acct = self.accounts.get(order.get("account_id"))
+            if acct is not None and getattr(acct, "live", False):
+                self.store.resolve_manual_order(
+                    oid, "rejected",
+                    reject_reason="manual trades are not available on a live "
+                                  "account yet - this would be a paper fill")
+                log.info("MANUAL rejected %s: live account", symbol)
+                continue
+
             if contract is None:
                 self.store.resolve_manual_order(
                     oid, "rejected",
