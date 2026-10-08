@@ -716,6 +716,22 @@ class Engine:
                 if cfg.entry.max_slippage is not None and leg.quoted_price is not None:
                     ceiling_live = min(ceiling_live,
                                        leg.quoted_price + cfg.entry.max_slippage)
+                # Sized against the limit, not the quote. The size came from
+                # the quoted price, but the order may fill anywhere up to the
+                # limit - and did: 10 contracts sized at the quote filled at
+                # 0.112 and spent $1.12 of a $1 budget. Delta cannot fill above
+                # the limit, so qty x limit <= budget makes overspending
+                # impossible rather than merely unlikely.
+                budget_live = short_by(leg.contract.symbol) if partial else target
+                if ceiling_live and ceiling_live > 0:
+                    qty = min(int(qty), int(budget_live / ceiling_live))
+                if qty < 1:
+                    log.info("SKIP   %-18s %s: budget %.2f buys nothing at "
+                             "limit %.4f", rnd.round_id, leg.role,
+                             budget_live, ceiling_live)
+                    if cfg.entry.require_both_wings:
+                        return
+                    continue
                 fill = acct.executor.buy(
                     leg.contract.symbol, int(qty), ceiling_live,
                     rnd.round_id, leg.role)
