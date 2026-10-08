@@ -587,6 +587,24 @@ function DailyTable({ mode = 'paper' }) {
   )
 }
 
+/**
+ * The leg's name as a strangle would call it.
+ *
+ * An out-of-range trade is stored with the role `outside`, which the worker
+ * needs: it is what stops that round taking any further legs. But it is
+ * always bought at the strike nearest spot, and with spot past the whole
+ * range that is one of the two ends - the top if spot was above, the bottom
+ * if it was below. So it is shown as the wing it sits on, like every other
+ * leg, and the stored role is left alone.
+ */
+function legName(p) {
+  if (p.role !== 'outside') return p.role
+  const spot = Number(p.entry_spot)
+  const strike = Number(p.strike)
+  if (!Number.isFinite(spot) || !Number.isFinite(strike)) return p.role
+  return spot > strike ? 'wing_high' : 'wing_low'
+}
+
 function TradesTable({ positions, atrFor, atrLabel }) {
   const [openRound, setOpenRound] = useState(null)
   // Which legs have their fill breakdown open. A set rather than a single
@@ -728,7 +746,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                   </td>
                   <td className="nums px-2 py-2.5 text-right text-slate-400"
                       title={r.legs
-                        .map((l) => `${l.role} ${Number(l.strike).toLocaleString('en-US')}`
+                        .map((l) => `${legName(l)} ${Number(l.strike).toLocaleString('en-US')}`
                                     + ` ${l.side}`)
                         .join(', ')}>
                     {r.legs.length}
@@ -777,7 +795,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                         p.side === 'call' ? 'bg-emerald-600' : 'bg-rose-600'}`}>
                         {p.side === 'call' ? 'Y' : 'N'}
                       </span>
-                      {p.role}
+                      {legName(p)}
                     </td>
                     <td className="nums px-2 py-1.5 text-slate-400">
                       {Number(p.strike).toLocaleString('en-US')}
