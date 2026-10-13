@@ -5,6 +5,8 @@ import PortfolioTabs from './components/PortfolioTabs'
 import StrategyPanel from './components/StrategyPanel'
 import AccountBar from './components/AccountBar'
 import Logo from './components/Logo'
+import SignIn from './components/SignIn'
+import { currentAccess, allowedAccounts, isFullAccess, signOut } from './lib/access'
 
 function Setup() {
   return (
@@ -36,6 +38,7 @@ const MODE_KEY = 'predict.mode'
 const modeOf = (a) => a?.mode ?? 'paper'
 
 export default function App() {
+  const [access, setAccess] = useState(() => currentAccess())
   const [accounts, setAccounts] = useState([])
   const [accountId, setAccountId] = useState(null)
   const [mode, setMode] = useState(() => {
@@ -62,9 +65,11 @@ export default function App() {
   const [workerSeenAt, setWorkerSeenAt] = useState(null)
 
   const loadAccounts = useCallback(async () => {
-    if (!isConfigured) return
+    if (!isConfigured || !access) return
     try {
-      const rows = await fetchAccounts()
+      // Filtered to what this entry may see before anything downstream touches
+      // it, so the whole app only ever knows about the allowed accounts.
+      const rows = allowedAccounts(await fetchAccounts(), access)
       setAccounts(rows)
       setAccountsUnavailable(false)
       // Only the accounts on the side currently being shown are selectable;
@@ -83,7 +88,7 @@ export default function App() {
         setAccountsUnavailable(true)
       }
     }
-  }, [mode])
+  }, [mode, access])
 
   useEffect(() => { loadAccounts() }, [loadAccounts])
 
@@ -115,6 +120,22 @@ export default function App() {
     }
   }, [accountId, mode])
 
+  // A restricted entry may only have accounts on one side (its live JD account,
+  // say). Landing on an empty Paper tab would look broken, so move to whichever
+  // side actually holds the accounts this entry can see.
+  useEffect(() => {
+    if (!accounts.length) return
+    const here = accounts.filter((a) => modeOf(a) === mode)
+    if (here.length === 0) {
+      const next = modeOf(accounts[0])
+      if (next !== mode) {
+        try { localStorage.setItem(MODE_KEY, next) } catch { /* private mode */ }
+        setAccountId(null)
+        setMode(next)
+      }
+    }
+  }, [accounts, mode])
+
   // Worker liveness, kept only so a stuck order can explain itself.
   useEffect(() => {
     if (!isConfigured) return
@@ -127,7 +148,9 @@ export default function App() {
   }, [])
 
   if (!isConfigured) return <Setup />
+  if (!access) return <SignIn onSignedIn={setAccess} />
 
+  const fullAccess = isFullAccess(access)
   const visible = accounts.filter((a) => modeOf(a) === mode)
   const account = visible.find((a) => a.id === accountId) ?? null
   const isLive = mode === 'live'
@@ -156,27 +179,30 @@ export default function App() {
             {/* Paper and live are different money, so they are a switch
                 between two sets of accounts rather than a filter inside one
                 list. Live is red because the cost of mistaking which one you
-                are on is not symmetric. */}
-            <div role="tablist" aria-label="Account mode"
-                 className="flex rounded-lg border border-white/10 bg-ink-900 p-0.5">
-              {[['paper', 'Paper'], ['live', 'Live']].map(([key, label]) => {
-                const on = mode === key
-                return (
-                  <button
-                    key={key} role="tab" aria-selected={on}
-                    onClick={() => switchMode(key)}
-                    className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${
-                      on
-                        ? key === 'live'
-                          ? 'bg-rose-500/20 text-rose-300'
-                          : 'bg-sky-500/20 text-sky-300'
-                        : 'text-slate-500 hover:text-slate-300'}`}
-                  >
-                    {label}
-                  </button>
-                )
-              })}
-            </div>
+                are on is not symmetric. Hidden for a restricted entry, which
+                only ever has accounts on one side. */}
+            {fullAccess && (
+              <div role="tablist" aria-label="Account mode"
+                   className="flex rounded-lg border border-white/10 bg-ink-900 p-0.5">
+                {[['paper', 'Paper'], ['live', 'Live']].map(([key, label]) => {
+                  const on = mode === key
+                  return (
+                    <button
+                      key={key} role="tab" aria-selected={on}
+                      onClick={() => switchMode(key)}
+                      className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${
+                        on
+                          ? key === 'live'
+                            ? 'bg-rose-500/20 text-rose-300'
+                            : 'bg-sky-500/20 text-sky-300'
+                          : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           {/* Grouped right: justify-between would otherwise strand the
@@ -209,6 +235,21 @@ export default function App() {
             onSelect={setAccountId}
             onAccountsChanged={loadAccounts}
           />
+
+          <button
+            onClick={() => { signOut(); setAccess(null) }}
+            title="Sign out"
+            aria-label="Sign out"
+            className="rounded-lg border border-white/10 bg-ink-800 p-2 text-slate-400
+                       transition-colors hover:border-white/25 hover:text-slate-100"
+          >
+            <svg viewBox="0 0 16 16" fill="none" className="h-3.5 w-3.5">
+              <path d="M6 2H3.5A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14H6"
+                    stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M10.5 11 14 7.5 10.5 4M14 7.5H6" stroke="currentColor"
+                    strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
           </div>
         </div>
       </header>
