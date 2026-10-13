@@ -177,8 +177,8 @@ export default function App() {
   return (
     <div className={`min-h-screen ${leaving ? 'animate-fade-out' : 'animate-fade-in'}`}>
       <header className="sticky top-0 z-20 border-b border-white/5 bg-ink-950/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-4">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
             <div className="flex items-center gap-2.5">
               <Logo className="h-7 w-7" />
               <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>

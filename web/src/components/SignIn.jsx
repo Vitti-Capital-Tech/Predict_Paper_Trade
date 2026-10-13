@@ -49,7 +49,7 @@ export default function SignIn({ onSignedIn }) {
   }
 
   return (
-    <main className="relative min-h-screen lg:flex">
+    <main className="relative min-h-dvh lg:flex">
       {/* Market visual: a full-screen backdrop on mobile (so the whole screen is
           used), the left half on desktop. */}
       <div className="absolute inset-0 animate-fade-in lg:static lg:flex-1">
@@ -58,8 +58,8 @@ export default function SignIn({ onSignedIn }) {
 
       {/* Sign-in: a glass card centred over the chart on mobile, a solid side
           panel on desktop. Fills the screen height either way. */}
-      <div className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10
-                      lg:w-[480px] lg:flex-none lg:border-l lg:border-white/5 lg:bg-ink-900">
+      <div className="relative z-10 flex min-h-dvh items-center justify-center px-5 py-10
+                      lg:min-h-dvh lg:w-[480px] lg:flex-none lg:border-l lg:border-white/5 lg:bg-ink-900">
         <div
           ref={cardRef}
           className={`w-full max-w-sm rounded-2xl border border-white/10 bg-ink-900/85 p-6
