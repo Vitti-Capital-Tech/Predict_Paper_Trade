@@ -49,20 +49,23 @@ export default function SignIn({ onSignedIn }) {
   }
 
   return (
-    <main className="flex min-h-screen flex-col lg:flex-row">
-      {/* Immersive market panel — fills the left half on desktop, a banner on
-          mobile. This is "what Predict is" at a glance. */}
-      <div className="relative h-56 w-full animate-fade-in sm:h-72 lg:h-auto lg:flex-1">
+    <main className="relative min-h-screen lg:flex">
+      {/* Market visual: a full-screen backdrop on mobile (so the whole screen is
+          used), the left half on desktop. */}
+      <div className="absolute inset-0 animate-fade-in lg:static lg:flex-1">
         <SignInVisual />
       </div>
 
-      {/* Sign-in panel. Form sits near the top on mobile (so it is not stranded
-          in the middle of a tall screen) and centres vertically on desktop. */}
-      <div className="flex flex-1 flex-col items-center justify-start bg-ink-900 px-6 pb-12 pt-10
-                      lg:w-[480px] lg:flex-none lg:justify-center lg:border-l lg:border-white/5 lg:pt-12">
+      {/* Sign-in: a glass card centred over the chart on mobile, a solid side
+          panel on desktop. Fills the screen height either way. */}
+      <div className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10
+                      lg:w-[480px] lg:flex-none lg:border-l lg:border-white/5 lg:bg-ink-900">
         <div
           ref={cardRef}
-          className={`w-full max-w-sm ${success ? '' : 'animate-scale-in'}`}
+          className={`w-full max-w-sm rounded-2xl border border-white/10 bg-ink-900/85 p-6
+                      shadow-2xl shadow-black/50 backdrop-blur-xl
+                      lg:rounded-none lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none lg:backdrop-blur-none
+                      ${success ? '' : 'animate-scale-in'}`}
         >
           <div className="flex items-center gap-2.5">
             <Logo className="h-8 w-8" />
