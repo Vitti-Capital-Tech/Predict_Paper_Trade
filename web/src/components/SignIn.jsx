@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { signIn } from '../lib/access'
 import Logo from './Logo'
+import SignInVisual from './SignInVisual'
 
 /**
  * Email gate shown until a recognised entry is given. This only governs what
@@ -48,12 +49,20 @@ export default function SignIn({ onSignedIn }) {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md items-center px-4">
+    <main className="mx-auto flex min-h-screen max-w-3xl items-center px-4">
       <div
         ref={cardRef}
-        className={`w-full rounded-xl border border-white/5 bg-ink-900 p-6
+        className={`grid w-full overflow-hidden rounded-2xl border border-white/5 bg-ink-900
+                    shadow-2xl shadow-black/40 md:grid-cols-2
                     ${success ? '' : 'animate-scale-in'}`}
       >
+        {/* Live market visual: what this project is, at a glance. */}
+        <div className="h-40 border-b border-white/5 md:h-auto md:border-b-0 md:border-r">
+          <SignInVisual />
+        </div>
+
+        {/* Sign-in panel. */}
+        <div className="p-6">
         <div className="flex items-center gap-2.5">
           <Logo className="h-7 w-7" />
           <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>
@@ -101,6 +110,7 @@ export default function SignIn({ onSignedIn }) {
             </form>
           </>
         )}
+        </div>
       </div>
     </main>
   )
