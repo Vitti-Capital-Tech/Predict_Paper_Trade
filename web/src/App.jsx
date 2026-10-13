@@ -177,45 +177,45 @@ export default function App() {
   return (
     <div className={`min-h-screen ${leaving ? 'animate-fade-out' : 'animate-fade-in'}`}>
       <header className="sticky top-0 z-20 border-b border-white/5 bg-ink-950/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3 sm:gap-4">
-            <div className="flex items-center gap-2.5">
-              <Logo className="h-7 w-7" />
-              <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>
-            </div>
-
-            {/* Paper and live are different money, so they are a switch
-                between two sets of accounts rather than a filter inside one
-                list. Live is red because the cost of mistaking which one you
-                are on is not symmetric. Hidden for a restricted entry, which
-                only ever has accounts on one side. */}
-            {fullAccess && (
-              <div role="tablist" aria-label="Account mode"
-                   className="flex rounded-lg border border-white/10 bg-ink-900 p-0.5">
-                {[['paper', 'Paper'], ['live', 'Live']].map(([key, label]) => {
-                  const on = mode === key
-                  return (
-                    <button
-                      key={key} role="tab" aria-selected={on}
-                      onClick={() => switchMode(key)}
-                      className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${
-                        on
-                          ? key === 'live'
-                            ? 'bg-rose-500/20 text-rose-300'
-                            : 'bg-sky-500/20 text-sky-300'
-                          : 'text-slate-500 hover:text-slate-300'}`}
-                    >
-                      {label}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2.5 px-4 py-3">
+          {/* Branding */}
+          <div className="flex items-center gap-2.5">
+            <Logo className="h-7 w-7" />
+            <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>
           </div>
 
-          {/* Grouped right: justify-between would otherwise strand the
-              refresh button in the middle of the header. */}
-          <div className="flex items-center gap-2">
+          {/* Paper and live are different money, so they are a switch between
+              two sets of accounts rather than a filter inside one list. Live is
+              red because the cost of mistaking which one you are on is not
+              symmetric. Hidden for a restricted entry, which only ever has
+              accounts on one side. On mobile it drops to a full-width second
+              row; inline on desktop. */}
+          {fullAccess && (
+            <div role="tablist" aria-label="Account mode"
+                 className="order-last flex w-full rounded-lg border border-white/10 bg-ink-900 p-0.5
+                            lg:order-none lg:w-auto">
+              {[['paper', 'Paper'], ['live', 'Live']].map(([key, label]) => {
+                const on = mode === key
+                return (
+                  <button
+                    key={key} role="tab" aria-selected={on}
+                    onClick={() => switchMode(key)}
+                    className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors lg:flex-none lg:py-1 ${
+                      on
+                        ? key === 'live'
+                          ? 'bg-rose-500/20 text-rose-300'
+                          : 'bg-sky-500/20 text-sky-300'
+                        : 'text-slate-500 hover:text-slate-300'}`}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Actions — pushed to the right of the top row. */}
+          <div className="ml-auto flex items-center gap-2">
           <button
             onClick={refreshNow}
             disabled={refreshing}
