@@ -5,7 +5,7 @@ import {
   saveDeltaCredentials, requestDeltaCheck, fetchDeltaCheck, adoptDeltaCheck,
   fetchDeltaCredentials, verifyDeltaCredentials,
 } from '../lib/supabase'
-import { PencilIcon, PlugIcon, ResetIcon, SpinnerIcon, TrashIcon } from './icons'
+import { PencilIcon, PlugIcon, ResetIcon, SpinnerIcon, TelegramIcon, TrashIcon } from './icons'
 import { useToast } from './Toasts'
 
 /**
@@ -218,6 +218,21 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
     return () => { alive = false; clearInterval(t) }
   }, [live, account?.id, credPending])
 
+  // Say so when a Telegram link completes. The worker does the binding, so
+  // the first sign of it here is the chat id appearing on the next poll.
+  // Keyed by account, so switching from an unconnected account to a connected
+  // one is not mistaken for a link completing.
+  const hadChat = useRef({ id: null, chat: null })
+  useEffect(() => {
+    const id = account?.id ?? null
+    const chat = account?.telegram_chat_id ?? null
+    const prev = hadChat.current
+    hadChat.current = { id, chat }
+    if (id !== null && prev.id === id && !prev.chat && chat) {
+      toast(`Telegram connected to ${account.name}`, 'ok')
+    }
+  }, [account?.id, account?.telegram_chat_id, account?.name, toast])
+
   // Announce a verdict as it lands. The check runs on the worker and takes a
   // few seconds, so without this the only sign of an answer is a dot changing
   // colour on a screen nobody is watching by then.
@@ -243,6 +258,37 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
         : why, 'err')
     }
   }, [credStatus, liveCred?.last_error, liveCred?.seen_ip, liveCred?.balance, toast])
+
+  // The bot's @name, public by nature - it is in every t.me link. Without it
+  // there is nothing to open, so the button explains rather than fails.
+  const TG_BOT = (import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? '').replace(/^@/, '').trim()
+
+  /**
+   * Link this account to a Telegram chat.
+   *
+   * A single-use code goes onto the account and Telegram opens on
+   * t.me/<bot>?start=<code>. Pressing Start sends the code to the worker, which
+   * stores that chat against the account and spends the code. Nobody has to
+   * find or type a numeric chat id. The account list polls every few
+   * seconds, so the button turns connected on its own when it lands.
+   */
+  async function connectTelegram(a) {
+    if (!TG_BOT) {
+      toast('Telegram bot not configured — set VITE_TELEGRAM_BOT_USERNAME', 'err')
+      return
+    }
+    const bytes = new Uint8Array(18)
+    crypto.getRandomValues(bytes)
+    const code = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+    try {
+      await updateAccount(a.id, { telegram_link_code: code })
+      window.open(`https://t.me/${TG_BOT}?start=${code}`, '_blank', 'noopener')
+      toast('Press Start in Telegram to finish connecting', 'info')
+      onAccountsChanged?.()
+    } catch (e) {
+      toast(e.message ?? String(e), 'err')
+    }
+  }
 
   async function verifyConnection(a) {
     setVerifyingId(a.id)
@@ -513,6 +559,21 @@ export default function AccountBar({ account, accounts, onSelect, onAccountsChan
                                     onClick={() => startEdit(a)}>
                           <PencilIcon />
                         </IconButton>
+                        {/* Alerts arrive only for live accounts, so the link
+                            is only offered there. Lit when a chat is bound. */}
+                        {live && (
+                          <IconButton
+                            title={a.telegram_chat_id
+                              ? 'Telegram connected — click to connect a different chat'
+                              : 'Connect Telegram for trade alerts'}
+                            label="Connect Telegram"
+                            onClick={() => connectTelegram(a)}
+                          >
+                            <span className={a.telegram_chat_id ? 'text-sky-400' : ''}>
+                              <TelegramIcon />
+                            </span>
+                          </IconButton>
+                        )}
                         {/* Rechecking is the one live-account action worth a
                             button of its own: keys get revoked and allowlists
                             get edited, and nothing tells you until you ask. */}

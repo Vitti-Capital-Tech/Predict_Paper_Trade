@@ -19,6 +19,7 @@ from .portfolio import Portfolio, Position
 from .rounds import (Contract, Round, build_rounds, parse_symbol,
                      expiry_code_to_dt)
 from .delta_auth import DeltaAuthClient, SETTLEMENT_ASSETS, check_connection
+from . import telegram
 from .live import LiveExecutor, LiveFill, dry_run
 from .store import build_store
 from .strategy import Strategy
@@ -174,6 +175,7 @@ class Engine:
         self._balance_at: float = 0.0
         self._reconcile_at: float = 0.0
         self._adopted_live: set = set()
+        self._reconcile_fails: Dict[int, int] = {}
         # Authenticated clients for live accounts, kept whether or not the
         # account is armed: the balance is worth showing even when nothing is
         # being sent.
@@ -272,8 +274,13 @@ class Engine:
             acct.name = info.get("name") or str(aid)
             acct.balance = float(info.get("balance") or 0.0)
             acct.live = mode != "paper"
+            # The account's own Telegram chat, set by the /start link. Read on
+            # every refresh, so connecting takes effect without a restart.
+            acct.chat_id = str(info.get("telegram_chat_id") or "")
             if acct.live:
                 self._attach_executor(acct)
+                if acct.executor is not None:
+                    acct.executor.chat_id = acct.chat_id
 
             stamp = row.get("updated_at")
             if stamp != acct.stamp:
@@ -397,6 +404,16 @@ class Engine:
                 continue
             self.portfolio.settle_position(
                 pos, price, now, self._last_spot.get(pos.symbol))
+            owner = self.accounts.get(pos.account_id)
+            if owner is not None and getattr(owner, "live", False):
+                won = float(price) >= 0.5
+                telegram.notify_trade(
+                    owner.name,
+                    "\U0001F3C1 SETTLED - %s" % ("WON" if won else "EXPIRED WORTHLESS"),
+                    "%s\nqty %.0f, paid %.4f, settled at %.2f" % (
+                        pos.symbol, float(pos.qty), float(pos.entry_price), float(price)),
+                    pnl=(float(price) - float(pos.entry_price)) * float(pos.qty),
+                    chat_id=getattr(owner, "chat_id", ""))
 
     # ---- recovery -------------------------------------------------------
     def maybe_adopt(self, now_ts: float) -> None:
@@ -545,6 +562,11 @@ class Engine:
                     "RECORD FAILED closing %s qty=%s @ %s - the sale happened "
                     "and is NOT in the table; reconcile by hand",
                     pos.symbol, fill.qty, fill.avg_price)
+                telegram.notify_failure(
+                    telegram.AMBER, getattr(owner, "name", "-"),
+                    "Exit RECORD FAILED (%s) - sold on Delta but not saved" % pos.symbol,
+                    "", "qty %s @ %s" % (fill.qty, fill.avg_price),
+                    getattr(owner, "chat_id", ""))
 
     def _open_leg(self, aid: Optional[int], round_id: str, symbol: str):
         """This account's open position on a contract, if it already holds one."""
@@ -871,6 +893,14 @@ class Engine:
                     "RECORD FAILED %s %s qty=%s @ %s - the fill happened and is "
                     "NOT in the table; reconcile by hand",
                     acct.name, leg.contract.symbol, fill.qty, fill.avg_price)
+                if acct.live:
+                    telegram.notify_failure(
+                        telegram.AMBER, acct.name,
+                        "Entry RECORD FAILED (%s) - bought on Delta but not saved; "
+                        "reconciliation should adopt it within a minute"
+                        % leg.contract.symbol,
+                        "", "qty %s @ %s" % (fill.qty, fill.avg_price),
+                        getattr(acct, "chat_id", ""))
 
     # ---- manual orders from the trade panel -----------------------------
     def process_manual_orders(self, by_symbol: Dict[str, Contract],
@@ -1158,6 +1188,10 @@ class Engine:
         if not creds or not creds.get("api_secret"):
             log.warning("LIVE   %s is enabled but has no usable credentials",
                         acct.name)
+            telegram.notify_failure(
+                telegram.RED, acct.name,
+                "Armed live but NO Delta credentials - orders cannot be placed",
+                "", "", getattr(acct, "chat_id", ""))
             return
         acct.executor = LiveExecutor(
             acct.account_id, acct.name, creds.get("api_key") or "",
@@ -1308,7 +1342,18 @@ class Engine:
             except Exception as exc:  # noqa: BLE001
                 log.warning("LIVE   reconcile read failed for account %s: %s",
                             aid, exc)
+                # One failure is routine - 43 in five days, each retried a
+                # minute later. Five in a row is several minutes of not knowing
+                # what Delta holds, and that is worth a person's attention.
+                n = self._reconcile_fails.get(aid, 0) + 1
+                self._reconcile_fails[aid] = n
+                if n == 5:
+                    telegram.notify_failure(
+                        telegram.AMBER, (self.accounts[aid].name if aid in self.accounts else str(aid)),
+                        "Reconcile with Delta FAILED 5 times in a row - "
+                        "positions may be out of sync", str(exc))
                 continue
+            self._reconcile_fails[aid] = 0
 
             on_delta: Dict[str, float] = {}
             entry_of: Dict[str, float] = {}
@@ -1354,12 +1399,23 @@ class Engine:
                             "LIVE   STUCK %s is closed here but still open on "
                             "Delta qty=%.0f - the exit did not reach the "
                             "exchange; it will settle there", sym, size)
+                        telegram.notify_failure(
+                            telegram.AMBER, (self.accounts[aid].name if aid in self.accounts else str(aid)),
+                            "%s is closed in the engine but still OPEN on Delta "
+                            "(size %.0f) - the exit did not reach the exchange; "
+                            "it will settle there" % (sym, size))
                     self._held_symbols.add((aid, sym))
                     continue
 
                 if held is None:
                     log.warning("LIVE   ADOPT %s qty=%.0f @ %.4f - on Delta, "
                                 "missing here", sym, size, price)
+                    telegram.notify_failure(
+                        telegram.AMBER, (self.accounts[aid].name if aid in self.accounts else str(aid)),
+                        "Untracked position ADOPTED (%s, size %.0f) - it was on "
+                        "Delta but missing from the engine; now recorded and "
+                        "managed. If nobody traded by hand, tell the developer."
+                        % (sym, size))
                     fill = LiveFill(True, qty=size, avg_price=price,
                                     top_price=price, requested_qty=size,
                                     levels_consumed=1)
@@ -1408,6 +1464,10 @@ class Engine:
                 self._adopted_live.add((aid, sym))
                 log.warning("LIVE   ORPHAN %s is open here but not on Delta - "
                             "check by hand; nothing closed automatically", sym)
+                telegram.notify_failure(
+                    telegram.AMBER, (self.accounts[aid].name if aid in self.accounts else str(aid)),
+                    "%s is open in the engine but NOT on Delta - engine is not "
+                    "closing it; check Delta" % sym)
 
     # ---- dashboard feed -------------------------------------------------
     def _leg_payload(self, leg: Optional[Contract], max_price: float) -> Optional[Dict]:
@@ -1473,6 +1533,18 @@ class Engine:
                  self.cfg.middle_max_price, self.cfg.atr.min_atr,
                  self.cfg.atr.candle_symbol, self.cfg.atr.resolution,
                  self.cfg.exit.mode, self.cfg.fills.model)
+
+        # Telegram: answer /start links from the dashboard. Started once, from
+        # the long-running loop - a dry run or a one-off check must not take
+        # the bot's single getUpdates slot from the real worker.
+        link = getattr(self.store, "link_telegram", None)
+        if telegram.enabled() and link is not None:
+            telegram.start_link_listener(link)
+            log.info("TELEGRAM alerts on%s", "" if telegram.ERROR_CHAT
+                     else " (no TELEGRAM_ERROR_CHAT_ID - errors go to each "
+                          "account's own chat)")
+        else:
+            log.info("TELEGRAM alerts off - set TELEGRAM_BOT_TOKEN to enable")
         try:
             while True:
                 if max_iterations is not None and iterations >= max_iterations:

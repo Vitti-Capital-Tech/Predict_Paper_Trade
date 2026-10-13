@@ -26,6 +26,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from . import telegram
 from .delta_auth import DeltaAuthClient, DeltaAuthError, clamp_tag, clean_price
 
 log = logging.getLogger("predict.live")
@@ -84,6 +85,9 @@ class LiveExecutor:
                  api_secret: str, base_url: str):
         self.account_id = account_id
         self.name = name
+        # The account's own Telegram chat, for its trade messages. Set by the
+        # engine from the accounts row, and refreshed when it changes.
+        self.chat_id = ""
         self.client = DeltaAuthClient(api_key, api_secret, base_url)
 
     def tag(self, round_id: str, role: str, attempt: int = 0) -> str:
@@ -141,15 +145,27 @@ class LiveExecutor:
                 log.error("LIVE   %-14s order UNCONFIRMED %s qty=%d @ %s: %s "
                           "- may or may not have reached the exchange",
                           self.name, symbol, qty, price, exc)
+                telegram.notify_failure(
+                    telegram.AMBER, self.name,
+                    "Order UNCONFIRMED (buy %s) - may be open on Delta" % symbol,
+                    str(exc), "qty %d @ %s" % (qty, price), self.chat_id)
                 return LiveFill(False, reason="unconfirmed: %s" % exc,
                                 unconfirmed=True)
             log.error("LIVE   %-14s order REFUSED %s qty=%d @ %s: %s",
                       self.name, symbol, qty, price, exc)
+            telegram.notify_failure(
+                telegram.YELLOW, self.name,
+                "Order send FAILED (buy %s) - nothing was opened" % symbol,
+                str(exc), "qty %d @ %s" % (qty, price), self.chat_id)
             return LiveFill(False, reason=str(exc))
         except Exception as exc:  # noqa: BLE001
             log.error("LIVE   %-14s order UNCONFIRMED %s qty=%d @ %s: %s "
                       "- may or may not have reached the exchange",
                       self.name, symbol, qty, price, exc)
+            telegram.notify_failure(
+                telegram.AMBER, self.name,
+                "Order UNCONFIRMED (buy %s) - may be open on Delta" % symbol,
+                str(exc), "qty %d @ %s" % (qty, price), self.chat_id)
             return LiveFill(False, reason="unconfirmed: %s" % exc,
                             unconfirmed=True)
 
@@ -166,6 +182,10 @@ class LiveExecutor:
 
         log.info("LIVE   %-14s BOUGHT %-28s qty=%-6.0f @ %.4f  [%s]",
                  self.name, symbol, filled, avg, order["client_order_id"])
+        telegram.notify_trade(self.name, "📥 LIVE ENTRY",
+                              "Bought %s\nqty %.0f @ %.4f ($%.2f)" % (
+                                  symbol, filled, avg, filled * avg),
+                              chat_id=self.chat_id)
         return LiveFill(True, qty=filled, avg_price=avg, order_id=oid,
                         top_price=float(price), slippage_vs_top=avg - float(price),
                         levels_consumed=1, requested_qty=float(qty))
@@ -226,15 +246,27 @@ class LiveExecutor:
                 log.error("LIVE   %-14s exit UNCONFIRMED %s qty=%d @ %s: %s "
                           "- may or may not have reached the exchange",
                           self.name, symbol, qty, price, exc)
+                telegram.notify_failure(
+                    telegram.RED, self.name,
+                    "Close UNCONFIRMED (sell %s) - leg may still be OPEN on Delta" % symbol,
+                    str(exc), "qty %d @ %s" % (qty, price), self.chat_id)
                 return LiveFill(False, reason="unconfirmed: %s" % exc,
                                 unconfirmed=True)
             log.error("LIVE   %-14s exit REFUSED %s qty=%d @ %s: %s",
                       self.name, symbol, qty, price, exc)
+            telegram.notify_failure(
+                telegram.RED, self.name,
+                "Close FAILED (sell %s) - leg may still be OPEN on Delta" % symbol,
+                str(exc), "qty %d @ %s" % (qty, price), self.chat_id)
             return LiveFill(False, reason=str(exc))
         except Exception as exc:  # noqa: BLE001
             log.error("LIVE   %-14s exit UNCONFIRMED %s qty=%d @ %s: %s "
                       "- may or may not have reached the exchange",
                       self.name, symbol, qty, price, exc)
+            telegram.notify_failure(
+                telegram.RED, self.name,
+                "Close UNCONFIRMED (sell %s) - leg may still be OPEN on Delta" % symbol,
+                str(exc), "qty %d @ %s" % (qty, price), self.chat_id)
             return LiveFill(False, reason="unconfirmed: %s" % exc,
                             unconfirmed=True)
 
@@ -248,6 +280,10 @@ class LiveExecutor:
 
         log.info("LIVE   %-14s SOLD   %-28s qty=%-6.0f @ %.4f  [%s]",
                  self.name, symbol, filled, avg, order["client_order_id"])
+        telegram.notify_trade(self.name, "📤 LIVE EXIT",
+                              "Sold %s\nqty %.0f @ %.4f ($%.2f)" % (
+                                  symbol, filled, avg, filled * avg),
+                              chat_id=self.chat_id)
         return LiveFill(True, qty=filled, avg_price=avg, order_id=res.get("id"),
                         top_price=float(price), slippage_vs_top=float(price) - avg,
                         levels_consumed=1, requested_qty=float(qty))

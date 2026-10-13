@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from . import telegram
+
 log = logging.getLogger(__name__)
 
 # How long to keep believing a column is missing before testing it
@@ -64,6 +66,12 @@ class SupabaseStore:
         self._lock = threading.Lock()
         self._failures = 0
         self._last_error = ""
+        # The current run of consecutive failures, for the outage alert. Reset
+        # by any success: the heartbeat writes every few seconds, so a streak
+        # that lasts 45s means nothing at all is getting through - a real
+        # outage, not one table refusing one column.
+        self._outage_since: Optional[float] = None
+        self._outage_alerted: Optional[float] = None
         # Columns Supabase rejected, and when. Not a plain set: a column is
         # missing until someone runs the migration, and nothing here notices
         # that they have. Both entry_fills and exit_spot were written, the
@@ -89,8 +97,7 @@ class SupabaseStore:
             if r.status_code >= 400:
                 self._note_failure("%s -> %s %s" % (table, r.status_code, r.text[:200]))
                 return None
-            self._failures = 0
-            self._last_error = ""
+            self._note_ok()
             if "return=representation" in prefer and r.content:
                 return r.json()
             return []
@@ -107,6 +114,8 @@ class SupabaseStore:
                                    headers={"Prefer": "return=minimal"})
             if r.status_code >= 400:
                 self._note_failure("%s patch -> %s %s" % (table, r.status_code, r.text[:200]))
+            else:
+                self._note_ok()
         except Exception as exc:  # noqa: BLE001
             self._note_failure("%s patch -> %s" % (table, exc))
 
@@ -116,6 +125,34 @@ class SupabaseStore:
         # Warn on the first few, then go quiet so a long outage cannot flood the log.
         if self._failures <= 3 or self._failures % 50 == 0:
             log.warning("supabase write failed (%d): %s", self._failures, msg)
+
+        now = time.time()
+        if self._outage_since is None:
+            self._outage_since = now
+        down = now - self._outage_since
+        # 45s and at least a few failures before saying anything; then once
+        # every ten minutes while it lasts.
+        if down >= 45 and self._failures >= 3 and (
+                self._outage_alerted is None or now - self._outage_alerted >= 600):
+            repeat = self._outage_alerted is not None
+            self._outage_alerted = now
+            telegram.notify_system(
+                "DATABASE STILL UNREACHABLE" if repeat else "DATABASE UNREACHABLE",
+                "The engine has not been able to write to Supabase for %ds. Positions "
+                "and fills are not being saved and the dashboard is going stale; "
+                "orders already on Delta are unaffected. Last error: %s"
+                % (down, msg[:200]))
+
+    def _note_ok(self) -> None:
+        self._failures = 0
+        self._last_error = ""
+        if self._outage_alerted is not None and self._outage_since is not None:
+            telegram.notify_resolved(
+                "DATABASE RECOVERED",
+                "Supabase writes are working again after %ds."
+                % (time.time() - self._outage_since))
+        self._outage_since = None
+        self._outage_alerted = None
 
     # ---- api ------------------------------------------------------------
     def start_run(self, run_name: str, config: Dict[str, Any],
@@ -305,6 +342,34 @@ class SupabaseStore:
         except Exception as exc:  # noqa: BLE001
             self._note_failure("accounts -> %s" % exc)
             return None
+
+    # ---- telegram ---------------------------------------------------------
+    def link_telegram(self, code: str, chat_id: str) -> Optional[str]:
+        """Bind a chat to the account holding `code`, and spend the code.
+
+        Returns the account name, or None if no account holds it - an expired
+        link, or one already used. The code is checked against a strict
+        alphabet before it goes anywhere near a query: it arrives from
+        whoever messaged the bot.
+        """
+        if not code or not (8 <= len(code) <= 64) or not all(
+                ch.isalnum() or ch in "-_" for ch in code):
+            return None
+        try:
+            r = self.session.get("%s/accounts" % self.base, timeout=self.timeout,
+                                 params={"select": "id,name",
+                                         "telegram_link_code": "eq.%s" % code,
+                                         "limit": "1"})
+            rows = r.json() if r.status_code < 400 else []
+        except Exception as exc:  # noqa: BLE001
+            self._note_failure("telegram link -> %s" % exc)
+            return None
+        if not rows:
+            return None
+        self._patch("accounts",
+                    {"telegram_chat_id": str(chat_id), "telegram_link_code": None},
+                    {"id": "eq.%d" % int(rows[0]["id"])})
+        return rows[0].get("name") or str(rows[0]["id"])
 
     # ---- live credentials -----------------------------------------------
     def credentials_awaiting_check(self) -> List[Dict[str, Any]]:

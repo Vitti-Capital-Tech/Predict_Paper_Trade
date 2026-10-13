@@ -109,3 +109,15 @@ export function SpinnerIcon({ className = 'h-3.5 w-3.5' }) {
     </svg>
   )
 }
+
+/** Telegram's paper plane, for the alerts link. */
+export function TelegramIcon({ className = 'h-3.5 w-3.5' }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M14.2 2.3 1.9 7.1c-.6.2-.6 1 0 1.2l3 1 1.2 3.7c.2.5.8.6 1.1.2l1.7-1.7 3 2.2c.4.3 1 .1 1.1-.4l2-10c.1-.6-.5-1.1-1.1-.9Z"
+            stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="m4.9 9.3 6.6-4.6-5.2 5.5" stroke="currentColor" strokeWidth="1.2"
+            strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
