@@ -3,8 +3,10 @@
 Two kinds of message, routed differently:
 
   * Errors - something failed and a person may need to act. They go to the
-    error group when TELEGRAM_ERROR_CHAT_ID is set, otherwise to the account's
-    own chat, otherwise to TELEGRAM_CHAT_ID. One place to watch beats eight.
+    admin group (TELEGRAM_ERROR_CHAT_ID), which watches every account, AND to
+    the account's own chat, so the owner hears about their own account too.
+    Faults with no account - the database, the engine itself - go to the admin
+    group only.
   * Trades - an entry, an exit, a settlement. They go to the account's own
     chat, so each account's owner sees their own book and nobody else's.
 
@@ -138,7 +140,11 @@ def notify_failure(level: str, account: str, what: str, error: str = "",
     s = _get()
     if not s:
         return
-    dest = ERROR_CHAT or chat_id or DEFAULT_CHAT
+    # Both: the admin group watches every account, and the owner hears about
+    # their own. A chat that is both - the owner linked the admin group - gets
+    # it once. Neither set falls back to the default chat.
+    dests = [d for d in dict.fromkeys([ERROR_CHAT, chat_id]) if d] or (
+        [DEFAULT_CHAT] if DEFAULT_CHAT else [])
     lines = ["%s <b>LIVE TRADING %s</b>" % (_ICON.get(level, ""), _LABEL.get(level, "ALERT")),
              "<b>Account:</b> %s" % escape(account or "-"),
              "<b>What:</b> %s" % escape(what)]
@@ -147,7 +153,9 @@ def notify_failure(level: str, account: str, what: str, error: str = "",
     if extra:
         lines.append("<code>%s</code>" % escape(extra[:200]))
     lines.append(_stamp())
-    s.submit(dest, "\n".join(lines), "%s|%s|%s|%s" % (dest, account, what, error))
+    text = "\n".join(lines)
+    for dest in dests:
+        s.submit(dest, text, "%s|%s|%s|%s" % (dest, account, what, error))
 
 
 def notify_system(title: str, detail: str = "", level: str = RED) -> None:

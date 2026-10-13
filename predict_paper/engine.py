@@ -1351,7 +1351,7 @@ class Engine:
                     telegram.notify_failure(
                         telegram.AMBER, (self.accounts[aid].name if aid in self.accounts else str(aid)),
                         "Reconcile with Delta FAILED 5 times in a row - "
-                        "positions may be out of sync", str(exc))
+                        "positions may be out of sync", str(exc), chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""))
                 continue
             self._reconcile_fails[aid] = 0
 
@@ -1403,7 +1403,7 @@ class Engine:
                             telegram.AMBER, (self.accounts[aid].name if aid in self.accounts else str(aid)),
                             "%s is closed in the engine but still OPEN on Delta "
                             "(size %.0f) - the exit did not reach the exchange; "
-                            "it will settle there" % (sym, size))
+                            "it will settle there" % (sym, size), chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""))
                     self._held_symbols.add((aid, sym))
                     continue
 
@@ -1415,7 +1415,7 @@ class Engine:
                         "Untracked position ADOPTED (%s, size %.0f) - it was on "
                         "Delta but missing from the engine; now recorded and "
                         "managed. If nobody traded by hand, tell the developer."
-                        % (sym, size))
+                        % (sym, size), chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""))
                     fill = LiveFill(True, qty=size, avg_price=price,
                                     top_price=price, requested_qty=size,
                                     levels_consumed=1)
@@ -1467,7 +1467,7 @@ class Engine:
                 telegram.notify_failure(
                     telegram.AMBER, (self.accounts[aid].name if aid in self.accounts else str(aid)),
                     "%s is open in the engine but NOT on Delta - engine is not "
-                    "closing it; check Delta" % sym)
+                    "closing it; check Delta" % sym, chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""))
 
     # ---- dashboard feed -------------------------------------------------
     def _leg_payload(self, leg: Optional[Contract], max_price: float) -> Optional[Dict]:
