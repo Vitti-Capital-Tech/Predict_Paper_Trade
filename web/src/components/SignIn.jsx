@@ -49,67 +49,67 @@ export default function SignIn({ onSignedIn }) {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl items-center px-4">
-      <div
-        ref={cardRef}
-        className={`grid w-full overflow-hidden rounded-2xl border border-white/5 bg-ink-900
-                    shadow-2xl shadow-black/40 md:grid-cols-2
-                    ${success ? '' : 'animate-scale-in'}`}
-      >
-        {/* Live market visual: what this project is, at a glance. */}
-        <div className="h-40 border-b border-white/5 md:h-auto md:border-b-0 md:border-r">
-          <SignInVisual />
-        </div>
+    <main className="flex min-h-screen flex-col lg:flex-row">
+      {/* Immersive market panel — fills the left half on desktop, a banner on
+          mobile. This is "what Predict is" at a glance. */}
+      <div className="relative h-52 w-full animate-fade-in sm:h-64 lg:h-auto lg:flex-1">
+        <SignInVisual />
+      </div>
 
-        {/* Sign-in panel. */}
-        <div className="p-6">
-        <div className="flex items-center gap-2.5">
-          <Logo className="h-7 w-7" />
-          <h1 className="text-lg font-semibold italic text-sky-400">Predict</h1>
-        </div>
-
-        {success ? (
-          <div className="flex flex-col items-center py-8 text-center animate-fade-in">
-            <div className="animate-pop-in flex h-14 w-14 items-center justify-center
-                            rounded-full bg-emerald-500/15 ring-1 ring-emerald-400/40">
-              <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="#34d399"
-                   strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path className="animate-draw-check" d="M20 6 9 17l-5-5" />
-              </svg>
-            </div>
-            <p className="mt-4 text-sm font-medium text-slate-100">Signing you in…</p>
-            <p className="mt-1 text-xs text-slate-500">Loading your dashboard</p>
+      {/* Sign-in panel. */}
+      <div className="flex flex-1 items-center justify-center bg-ink-900 px-6 py-12
+                      lg:w-[480px] lg:flex-none lg:border-l lg:border-white/5">
+        <div
+          ref={cardRef}
+          className={`w-full max-w-sm ${success ? '' : 'animate-scale-in'}`}
+        >
+          <div className="flex items-center gap-2.5">
+            <Logo className="h-8 w-8" />
+            <h1 className="text-xl font-semibold italic text-sky-400">Predict</h1>
           </div>
-        ) : (
-          <>
-            <h2 className="mt-5 text-base font-semibold text-slate-100">Sign in</h2>
-            <p className="mt-1 text-sm text-slate-400">
-              Enter your email to access the dashboard.
-            </p>
-            <form onSubmit={submit} className="mt-4 space-y-3">
-              <input
-                type="text"
-                autoFocus
-                value={email}
-                onChange={(e) => { setEmail(e.target.value); setErr(null) }}
-                placeholder="name@example.com"
-                aria-label="Email"
-                className={`w-full rounded-lg border bg-ink-950 px-3 py-2 text-sm
-                            text-slate-100 placeholder-slate-600 outline-none transition-colors
-                            ${err ? 'border-rose-500/50 focus:border-rose-500/70'
-                                  : 'border-white/10 focus:border-sky-500/50'}`}
-              />
-              {err && <p className="text-xs text-rose-400 animate-fade-in">{err}</p>}
-              <button
-                type="submit"
-                className="w-full rounded-lg bg-sky-500/20 px-3 py-2 text-sm font-semibold
-                           text-sky-300 transition-colors hover:bg-sky-500/30"
-              >
-                Continue
-              </button>
-            </form>
-          </>
-        )}
+
+          {success ? (
+            <div className="flex flex-col items-center py-14 text-center animate-fade-in">
+              <div className="animate-pop-in flex h-16 w-16 items-center justify-center
+                              rounded-full bg-emerald-500/15 ring-1 ring-emerald-400/40">
+                <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="#34d399"
+                     strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path className="animate-draw-check" d="M20 6 9 17l-5-5" />
+                </svg>
+              </div>
+              <p className="mt-5 text-sm font-medium text-slate-100">Signing you in…</p>
+              <p className="mt-1 text-xs text-slate-500">Loading your dashboard</p>
+            </div>
+          ) : (
+            <>
+              <h2 className="mt-10 text-2xl font-semibold text-slate-100">Sign in</h2>
+              <p className="mt-1.5 text-sm text-slate-400">
+                Enter your email to access the dashboard.
+              </p>
+              <form onSubmit={submit} className="mt-6 space-y-3">
+                <input
+                  type="text"
+                  autoFocus
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); setErr(null) }}
+                  placeholder="name@example.com"
+                  aria-label="Email"
+                  className={`w-full rounded-lg border bg-ink-950 px-3.5 py-2.5 text-sm
+                              text-slate-100 placeholder-slate-600 outline-none transition-colors
+                              ${err ? 'border-rose-500/50 focus:border-rose-500/70'
+                                    : 'border-white/10 focus:border-sky-500/50'}`}
+                />
+                {err && <p className="text-xs text-rose-400 animate-fade-in">{err}</p>}
+                <button
+                  type="submit"
+                  className="w-full rounded-lg bg-sky-500/20 px-3 py-2.5 text-sm font-semibold
+                             text-sky-300 transition-colors hover:bg-sky-500/30"
+                >
+                  Continue
+                </button>
+              </form>
+            </>
+          )}
         </div>
       </div>
     </main>
