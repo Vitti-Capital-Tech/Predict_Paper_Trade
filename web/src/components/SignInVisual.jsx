@@ -197,7 +197,7 @@ export default function SignInVisual() {
       const tw = ctx.measureText(label).width
       const tagW = tw + 14
       const tagH = 18
-      const tagX = w - tagW - 4
+      const tagX = w - tagW - 8
       const tagY = Math.max(PAD_Y - tagH / 2, Math.min(h - PAD_Y - tagH / 2, yNow - tagH / 2))
       ctx.fillStyle = 'rgba(56, 189, 248, 0.16)'
       ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)'

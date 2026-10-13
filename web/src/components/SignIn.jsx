@@ -52,13 +52,14 @@ export default function SignIn({ onSignedIn }) {
     <main className="flex min-h-screen flex-col lg:flex-row">
       {/* Immersive market panel — fills the left half on desktop, a banner on
           mobile. This is "what Predict is" at a glance. */}
-      <div className="relative h-52 w-full animate-fade-in sm:h-64 lg:h-auto lg:flex-1">
+      <div className="relative h-56 w-full animate-fade-in sm:h-72 lg:h-auto lg:flex-1">
         <SignInVisual />
       </div>
 
-      {/* Sign-in panel. */}
-      <div className="flex flex-1 items-center justify-center bg-ink-900 px-6 py-12
-                      lg:w-[480px] lg:flex-none lg:border-l lg:border-white/5">
+      {/* Sign-in panel. Form sits near the top on mobile (so it is not stranded
+          in the middle of a tall screen) and centres vertically on desktop. */}
+      <div className="flex flex-1 flex-col items-center justify-start bg-ink-900 px-6 pb-12 pt-10
+                      lg:w-[480px] lg:flex-none lg:justify-center lg:border-l lg:border-white/5 lg:pt-12">
         <div
           ref={cardRef}
           className={`w-full max-w-sm ${success ? '' : 'animate-scale-in'}`}
@@ -82,7 +83,7 @@ export default function SignIn({ onSignedIn }) {
             </div>
           ) : (
             <>
-              <h2 className="mt-10 text-2xl font-semibold text-slate-100">Sign in</h2>
+              <h2 className="mt-8 text-xl font-semibold text-slate-100 sm:mt-10 sm:text-2xl">Sign in</h2>
               <p className="mt-1.5 text-sm text-slate-400">
                 Enter your email to access the dashboard.
               </p>
