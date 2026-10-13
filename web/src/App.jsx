@@ -39,6 +39,7 @@ const modeOf = (a) => a?.mode ?? 'paper'
 
 export default function App() {
   const [access, setAccess] = useState(() => currentAccess())
+  const [leaving, setLeaving] = useState(false)
   const [accounts, setAccounts] = useState([])
   const [accountId, setAccountId] = useState(null)
   const [mode, setMode] = useState(() => {
@@ -150,6 +151,13 @@ export default function App() {
   if (!isConfigured) return <Setup />
   if (!access) return <SignIn onSignedIn={setAccess} />
 
+  // Fade out before clearing access, so the dashboard dissolves into the gate
+  // rather than snapping away.
+  const handleSignOut = () => {
+    setLeaving(true)
+    setTimeout(() => { signOut(); setAccess(null); setLeaving(false) }, 450)
+  }
+
   const fullAccess = isFullAccess(access)
   const visible = accounts.filter((a) => modeOf(a) === mode)
   const account = visible.find((a) => a.id === accountId) ?? null
@@ -167,7 +175,7 @@ export default function App() {
   const workerLive = workerAgeSec !== null && workerAgeSec < 30
 
   return (
-    <div className="min-h-screen">
+    <div className={`min-h-screen ${leaving ? 'animate-fade-out' : 'animate-fade-in'}`}>
       <header className="sticky top-0 z-20 border-b border-white/5 bg-ink-950/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-4">
@@ -237,7 +245,7 @@ export default function App() {
           />
 
           <button
-            onClick={() => { signOut(); setAccess(null) }}
+            onClick={handleSignOut}
             title="Sign out"
             aria-label="Sign out"
             className="rounded-lg border border-white/10 bg-ink-800 p-2 text-slate-400
