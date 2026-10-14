@@ -251,8 +251,12 @@ class LiveExecutor:
             # per id - a retry under the same id would make the answer
             # ambiguous. Delta does not refuse a reused id either, so
             # uniqueness costs no protection.
+            # The role is abbreviated to leave room for the stamp: with it in
+            # full, a wing's tag ran to 34 characters, past Delta's 32, and
+            # every wing exit was refused as bad_schema.
             "client_order_id": clamp_tag("X%s-%s-%s-%s" % (
-                self.account_id, round_id, role, _stamp36())),
+                self.account_id, round_id, _ROLE_TAG.get(role, role[:3]),
+                _stamp36())),
         }
 
         if dry_run():
@@ -269,6 +273,14 @@ class LiveExecutor:
             code = (exc.code or "").lower()
             if code in _NOT_HELD or "reduce_only" in code:
                 return self._not_held(symbol, qty, exc)
+            if "cancel_only" in code:
+                # The round's last minute: Delta takes cancels only, and the
+                # position settles at expiry whatever is sent. Expected, not a
+                # failure to wake anyone for.
+                log.info("LIVE   %-14s exit not possible for %s - market is "
+                         "cancel-only before expiry; it will settle",
+                         self.name, symbol)
+                return LiveFill(False, reason="market cancel-only before expiry")
             log.error("LIVE   %-14s exit REFUSED %s qty=%d @ %s: %s",
                       self.name, symbol, qty, price, exc)
             telegram.notify_failure(
@@ -425,6 +437,11 @@ class LiveExecutor:
 # Delta's ways of saying there is nothing to reduce. Binary markets answer
 # with the second; the first is what the API documents.
 _NOT_HELD = ("no_position_for_reduce_only", "naked_short_restricted")
+
+# Short forms for sell tags. "X29-ETH-1410261500-wh-d1r4h" is 27 characters,
+# which leaves room for a four-digit account id under Delta's 32.
+_ROLE_TAG = {"wing_high": "wh", "wing_low": "wl", "middle": "md",
+             "outside": "out", "adopted": "ad", "manual": "man"}
 
 _B36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 

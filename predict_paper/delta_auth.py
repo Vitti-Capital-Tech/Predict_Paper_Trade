@@ -212,7 +212,10 @@ def clean_price(price: Optional[float]) -> Optional[str]:
 
 
 # Delta caps client_order_id, and an over-long one is refused as `bad_schema`.
-MAX_COID = 36
+# 32, measured on 14 Oct: 32 characters passed validation and 33 did not. It
+# was 36 here until then, which went unnoticed while every tag happened to be
+# 30 or shorter - and then stopped every wing exit for three minutes.
+MAX_COID = 32
 
 
 def clamp_tag(tag: str) -> str:
