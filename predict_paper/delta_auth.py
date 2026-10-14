@@ -169,6 +169,16 @@ class DeltaAuthClient:
         """
         return self._request("GET", "/v2/positions/margined")
 
+    def order_by_client_id(self, client_order_id: str) -> Any:
+        """One order, by the id we gave it - however it ended.
+
+        The way to learn what became of an order whose POST timed out. On
+        13 Oct a sell timed out after 15s, was treated as unknown, and had in
+        fact filled 225 @ 0.4516 a second later; this call returned exactly
+        that. An id Delta never saw is refused as `order_not_found`.
+        """
+        return self._request("GET", "/v2/orders/client_order_id/%s" % client_order_id)
+
     def cancel_order(self, order_id: Any, product_id: Any) -> Any:
         return self._request("DELETE", "/v2/orders",
                              body={"id": order_id, "product_id": product_id})

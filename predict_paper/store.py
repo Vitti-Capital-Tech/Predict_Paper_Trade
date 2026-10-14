@@ -49,6 +49,7 @@ class NullStore:
     def finish_run(self, *a: Any, **k: Any) -> None: return None
     def pending_manual_orders(self, *a: Any, **k: Any) -> list: return []
     def adoptable_positions(self, *a: Any, **k: Any) -> list: return []
+    def open_symbols(self, *a: Any, **k: Any) -> set: return set()
     def strategy_configs(self, *a: Any, **k: Any) -> list: return []
     def accounts(self, *a: Any, **k: Any) -> list: return []
     def entered_round_keys(self, *a: Any, **k: Any) -> list: return []
@@ -453,6 +454,25 @@ class SupabaseStore:
         self._post("rpc/set_delta_verification", payload)
 
     # ---- recovery -------------------------------------------------------
+    def open_symbols(self, account_id: int) -> Optional[set]:
+        """Symbols this account has an open row for, whichever run owns it.
+
+        None when the read failed - which the caller must treat as "cannot
+        tell", not as "none".
+        """
+        try:
+            r = self.session.get("%s/positions" % self.base, timeout=self.timeout,
+                                 params={"select": "symbol",
+                                         "account_id": "eq.%s" % int(account_id),
+                                         "status": "eq.open", "limit": "500"})
+            if r.status_code >= 400:
+                self._note_failure("open symbols -> %s" % r.status_code)
+                return None
+            return {row.get("symbol") for row in (r.json() or [])}
+        except Exception as exc:  # noqa: BLE001
+            self._note_failure("open symbols -> %s" % exc)
+            return None
+
     def adoptable_positions(self, stale_after_sec: float = 120.0) -> List[Dict[str, Any]]:
         """Open positions left behind by a worker that is no longer running.
 

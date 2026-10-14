@@ -176,6 +176,12 @@ class Engine:
         self._reconcile_at: float = 0.0
         self._adopted_live: set = set()
         self._reconcile_fails: Dict[int, int] = {}
+        # (account, symbol) -> why an exit was wanted, kept while its sell is
+        # unanswered so the record carries the real reason once Delta answers.
+        self._exit_reasons: Dict[tuple, str] = {}
+        # Delta positions whose handover from the previous run is awaited -
+        # logged once each, see reconcile_live_positions.
+        self._handover_logged: set = set()
         # Authenticated clients for live accounts, kept whether or not the
         # account is armed: the balance is worth showing even when nothing is
         # being sent.
@@ -398,6 +404,10 @@ class Engine:
         for pos in list(self.portfolio.open_positions):
             if pos.symbol in live_symbols:
                 continue
+            # Sold before expiry is not settled at expiry. An unanswered sell
+            # is resolved first, and while Delta cannot say, settlement waits.
+            if self._resolve_unanswered_exit(pos, now):
+                continue
             price = self.client.settlement_price(pos.symbol)
             if price is None:
                 log.debug("settlement for %s not published yet", pos.symbol)
@@ -466,6 +476,13 @@ class Engine:
     # ---- exits ----------------------------------------------------------
     def manage_exits(self, by_symbol: Dict[str, Contract], now: datetime) -> None:
         for pos in list(self.portfolio.open_positions):
+            # A sell that went unanswered is settled from Delta's order record
+            # before anything else - including after the round has left the
+            # feed, and whether or not the exit rule still wants out. Waiting
+            # for the rule to fire again is how a sale that had happened was
+            # left open and then booked as expiring worthless.
+            if self._resolve_unanswered_exit(pos, now):
+                continue
             contract = by_symbol.get(pos.symbol)
             if contract is None:
                 continue
@@ -533,9 +550,10 @@ class Engine:
                     continue
                 if fill.unconfirmed:
                     # The sale may have gone through. Closing the record on a
-                    # guess would be wrong either way, and re-selling could
-                    # close a position twice; left open for reconciliation,
-                    # and it settles on the exchange regardless.
+                    # guess would be wrong either way; the executor looks the
+                    # order up on Delta each cycle until it knows, and the
+                    # reason is kept for the record that follows.
+                    self._exit_reasons[(pos.account_id, pos.symbol)] = reason
                     continue
             else:
                 book = (self._book(pos.symbol)
@@ -567,6 +585,37 @@ class Engine:
                     "Exit RECORD FAILED (%s) - sold on Delta but not saved" % pos.symbol,
                     "", "qty %s @ %s" % (fill.qty, fill.avg_price),
                     getattr(owner, "chat_id", ""))
+
+    def _resolve_unanswered_exit(self, pos, now: datetime) -> bool:
+        """True when an unanswered sell turned out to have filled and the
+        position has been closed at the price Delta actually gave, or when
+        Delta still cannot say - either way nothing more is done with this
+        position this cycle."""
+        owner = self.accounts.get(pos.account_id)
+        executor = getattr(owner, "executor", None)
+        if executor is None or not executor.has_pending(pos.symbol):
+            return False
+        fill = executor.resolve_pending(pos.symbol)
+        if fill is None:
+            return True                         # still unknown; do not sell again
+        reason = self._exit_reasons.pop((pos.account_id, pos.symbol),
+                                        "exit (confirmed on Delta)")
+        if not fill.filled:
+            return False                        # nothing sold; carry on as normal
+        try:
+            self.portfolio.close_position(
+                pos, fill, now, reason, self._last_spot.get(pos.symbol))
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "RECORD FAILED closing %s qty=%s @ %s - the sale happened "
+                "and is NOT in the table; reconcile by hand",
+                pos.symbol, fill.qty, fill.avg_price)
+            telegram.notify_failure(
+                telegram.AMBER, getattr(owner, "name", "-"),
+                "Exit RECORD FAILED (%s) - sold on Delta but not saved" % pos.symbol,
+                "", "qty %s @ %s" % (fill.qty, fill.avg_price),
+                getattr(owner, "chat_id", ""))
+        return True
 
     def _open_leg(self, aid: Optional[int], round_id: str, symbol: str):
         """This account's open position on a contract, if it already holds one."""
@@ -1378,6 +1427,11 @@ class Engine:
             done = {p.symbol for p in self.portfolio.closed
                     if p.account_id == aid}
 
+            # Rows still open in the table but not yet in this worker's memory:
+            # the previous run's, waiting for maybe_adopt. Read only when there
+            # is something to adopt, which is rare.
+            in_table: Optional[set] = None
+
             # Delta has it, we do not - or we have the wrong size.
             for sym, size in on_delta.items():
                 held = ours.get(sym)
@@ -1408,6 +1462,27 @@ class Engine:
                     continue
 
                 if held is None:
+                    # A worker that has just restarted takes over its
+                    # predecessor's positions only once that run's heartbeat
+                    # is two minutes stale, but this runs on the first poll.
+                    # On 13 Oct it adopted two positions both accounts already
+                    # held, and each was then recorded - and settled - twice.
+                    # A row still open in the table is not missing; it is
+                    # waiting to be handed over.
+                    if in_table is None:
+                        in_table = self.store.open_symbols(aid)
+                    if in_table is None:
+                        log.warning("LIVE   reconcile: cannot read open positions "
+                                    "for account %s - not adopting %s this pass",
+                                    aid, sym)
+                        continue
+                    if sym in in_table:
+                        if (aid, sym) not in self._handover_logged:
+                            self._handover_logged.add((aid, sym))
+                            log.info("LIVE   %s is open in the table from the "
+                                     "previous run - waiting for the handover, "
+                                     "not adopting", sym)
+                        continue
                     log.warning("LIVE   ADOPT %s qty=%.0f @ %.4f - on Delta, "
                                 "missing here", sym, size, price)
                     telegram.notify_failure(
