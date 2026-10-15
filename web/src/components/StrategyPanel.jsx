@@ -392,7 +392,6 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
 
   const isLive = (account?.mode ?? 'paper') === 'live'
   const armed = Boolean(saved?.enabled)
-  const trading = armed && workerLive
   // The same conversion the worker uses (Config.max_price_for_odds), for both
   // bars, so the price shown beside each field is the ceiling actually applied.
   const priceFor = (odds) => (draft.odds_convention === 'payout_multiple'
@@ -407,14 +406,11 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
           waiting for Save below: a stop control that needs a second
           confirmation is the wrong shape. */}
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        {/* No status dot here: the switch already says on or off, and on the
+            Live tab a second green dot beside the health bar's read as two
+            different alarms. The one case the switch cannot show - on, with
+            no worker to act on it - is spelled out beneath the title. */}
         <div className="flex items-center gap-3">
-          <span className={`relative flex h-2.5 w-2.5 shrink-0 rounded-full ${
-            trading ? 'bg-emerald-400' : armed ? 'bg-amber-400' : 'bg-slate-600'}`}>
-            {trading && (
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full
-                               bg-emerald-400 opacity-60" />
-            )}
-          </span>
           <div>
             <h3 className="text-sm font-semibold text-slate-100">
               Automated strategy

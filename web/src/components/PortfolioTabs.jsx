@@ -281,12 +281,17 @@ function OpenCard({ p, mark, close, onClose, busy, tolerance, now }) {
  * One number in the strip. `tone` colours it by sign where that means
  * something; a win rate is not better for being green.
  */
-function Stat({ label, value, sub, tone }) {
+function Stat({ label, value, sub, tone, info }) {
   const colour = tone === undefined ? 'text-slate-100'
     : tone >= 0 ? 'text-emerald-400' : 'text-rose-400'
   return (
     <div className="min-w-0">
-      <p className="truncate text-[11px] text-slate-500">{label}</p>
+      {/* The (i) sits outside the truncating label so its tooltip is not
+          clipped with it. */}
+      <div className="flex items-center gap-1.5">
+        <p className="truncate text-[11px] text-slate-500">{label}</p>
+        {info && <InfoDot text={info} />}
+      </div>
       <p className={`nums mt-0.5 truncate text-base font-semibold ${colour}`}>{value}</p>
       {sub && <p className="nums truncate text-[10px] text-slate-600">{sub}</p>}
     </div>
@@ -557,7 +562,8 @@ function DailyTable({ mode = 'paper' }) {
   return (
     <div className="overflow-x-auto">
       <p className="mb-2 text-[11px] text-slate-600">
-        Closing balance each day, with the day&apos;s realised P&amp;L beneath it.
+        Closing balance each day, with the day&apos;s realised P&amp;L beneath it and
+        how much that grew the balance the day started with.
         All accounts, newest first. Days run to IST midnight.
       </p>
       <table className="w-full text-[13px]">
@@ -582,6 +588,9 @@ function DailyTable({ mode = 'paper' }) {
                 const cell = byDay.get(d)?.get(a.id)
                 const bal = closing.get(a.id)?.get(d)
                 const pnl = Number(cell?.pnl ?? 0)
+                // Growth on the day: P&L against the balance it started from.
+                const opening = bal == null ? null : bal - pnl
+                const pct = cell && opening > 0 ? (100 * pnl) / opening : null
                 return (
                   <td key={a.id} className="nums px-3 py-2 text-right"
                       title={cell
@@ -595,6 +604,11 @@ function DailyTable({ mode = 'paper' }) {
                       !cell ? 'text-slate-700'
                         : pnl >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
                       {cell ? signed(pnl) : 'no trades'}
+                      {pct != null && (
+                        <span className="ml-1">
+                          ({pct >= 0 ? '+' : ''}{pct.toFixed(1)}%)
+                        </span>
+                      )}
                     </div>
                   </td>
                 )
@@ -1289,6 +1303,12 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
     () => summarise(scoped, Number(account?.starting_balance) || 0),
     [scoped, account?.starting_balance])
   const isToday = range === 'today'
+  // Biggest single-round win and loss, from the same per-round figures the
+  // win rate and drawdown use.
+  const extremes = useMemo(() => {
+    const v = perf.equityCurve.map((r) => r.pnl)
+    return v.length ? { best: Math.max(...v), worst: Math.min(...v) } : null
+  }, [perf])
 
   // Unrealised, from the depth-walked marks already fetched for the cards, so
   // this is what the book would actually pay to close everything right now -
@@ -1330,8 +1350,10 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         </div>
       </div>
 
+      {/* Five to eight cards depending on side and what is open, so the
+          columns fit the count rather than leaving a ragged second row. */}
       <div className="grid grid-cols-2 gap-4 border-b border-white/5 px-4 pb-3 pt-2
-                      sm:grid-cols-3 lg:grid-cols-6">
+                      sm:grid-cols-3 lg:grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))]">
         <Stat
           label="Realised P&L"
           value={fmt.usd(perf.totalPnl)}
@@ -1340,15 +1362,17 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
             : range === 'all' && !history ? 'loading full history…'
               : `${fmt.pct(perf.returnPct)} of starting`}
         />
-        <Stat
-          label="Unrealised"
-          value={scopedOpen.length ? fmt.usd(unreal) : '—'}
-          tone={scopedOpen.length ? unreal : undefined}
-          sub={!scopedOpen.length ? 'nothing open'
-            : openTotal.priced < openTotal.total
+        {/* Only while something is open - otherwise it read "—" most of the day. */}
+        {scopedOpen.length > 0 && (
+          <Stat
+            label="Unrealised"
+            value={fmt.usd(unreal)}
+            tone={unreal}
+            sub={openTotal.priced < openTotal.total
               ? `${openTotal.priced} of ${openTotal.total} legs priced · ${fmt.usd(committed)} in`
               : `${scopedOpen.length} open · ${fmt.usd(committed)} in`}
-        />
+          />
+        )}
         <Stat
           label="Round win rate"
           value={perf.rounds ? fmt.pct(perf.roundWinRate, 0) : '—'}
@@ -1360,6 +1384,15 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
           value={perf.rounds ? fmt.usd(perf.avgPerRound) : '—'}
           tone={perf.rounds ? perf.avgPerRound : undefined}
           sub={perf.rounds ? `${fmt.pct(perf.legWinRate, 0)} of legs won` : ''}
+        />
+        <Stat
+          label="Best / worst round"
+          value={extremes
+            ? <><span className="text-emerald-400">{fmt.usd(extremes.best)}</span>
+                <span className="text-slate-600"> / </span>
+                <span className="text-rose-400">{fmt.usd(extremes.worst)}</span></>
+            : '—'}
+          sub={extremes ? 'single rounds' : ''}
         />
         {/* Paper only. Live orders go in as limits, so a fill can never be
             worse than the price asked for and this reads $0.00 whatever
@@ -1373,6 +1406,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         )}
         <Stat
           label="Max drawdown"
+          info={'Your worst fall from your best point. Up $150, then down to '
+                + '$30 = a $120 drawdown, even if the day still ends in profit.'}
           value={fmt.usd(perf.maxDrawdown)}
           tone={perf.maxDrawdown ? -1 : undefined}
           sub={isToday ? 'worst run today' : 'worst run of rounds'}
@@ -1384,8 +1419,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         <div className="flex gap-6">
         {[['positions', 'Positions', open.length],
           ['trades', 'Recent Trades', closed.length],
-          ['daily', mode === 'live' ? 'Daily · live accounts'
-                                    : 'Daily · paper accounts', 0]].map(([key, label, n]) => (
+          ['daily', 'Daily report', 0]].map(([key, label, n]) => (
           <button
             key={key}
             onClick={() => setTab(key)}

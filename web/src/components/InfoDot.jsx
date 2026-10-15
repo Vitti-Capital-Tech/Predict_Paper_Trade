@@ -10,7 +10,9 @@
 export default function InfoDot({ text, side = 'top' }) {
   const place = side === 'right'
     ? 'left-full top-1/2 ml-1.5 -translate-y-1/2'
-    : 'bottom-full left-1/2 mb-1.5 -translate-x-1/2'
+    : side === 'bottom'
+      ? 'top-full left-0 mt-1.5'
+      : 'bottom-full left-1/2 mb-1.5 -translate-x-1/2'
   return (
     <span className="group/info relative inline-flex align-middle">
       <button
