@@ -3,6 +3,7 @@ import { isConfigured, fetchAccounts, fetchLatestRun } from './lib/supabase'
 import TradePanel from './components/TradePanel'
 import PortfolioTabs from './components/PortfolioTabs'
 import StrategyPanel from './components/StrategyPanel'
+import HealthBar from './components/HealthBar'
 import AccountBar from './components/AccountBar'
 import Logo from './components/Logo'
 import SignIn from './components/SignIn'
@@ -263,6 +264,7 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:py-6">
+        {isLive && <HealthBar workerSeenAt={workerSeenAt} account={account} />}
 
         {/* Filters and the automation switch sit above the ticket: they
             govern what the bot does with every round, so they belong where

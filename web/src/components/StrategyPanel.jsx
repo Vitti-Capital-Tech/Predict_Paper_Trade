@@ -8,6 +8,7 @@ import { atrNow, atrSeries, barSeconds } from '../lib/atr'
 import Dropdown from './Dropdown'
 import { useToast } from './Toasts'
 import ImportStrategyModal from './ImportStrategyModal'
+import InfoDot from './InfoDot'
 
 /**
  * The bot's control surface.
@@ -121,39 +122,6 @@ function Section({ title, children }) {
         {children}
       </div>
     </section>
-  )
-}
-
-/**
- * The small (i) beside a label.
- *
- * Shown on hover, and on tap: `focus-within` covers touch, where there is no
- * hover state at all and a hover-only tooltip is simply invisible.
- */
-function InfoDot({ text }) {
-  return (
-    <span className="group/info relative inline-flex">
-      <button
-        type="button" tabIndex={0} aria-label={text}
-        onClick={(e) => e.preventDefault()}
-        className="flex h-3.5 w-3.5 items-center justify-center rounded-full border
-                   border-slate-600 text-[8px] font-bold leading-none text-slate-500
-                   transition-colors hover:border-sky-500 hover:text-sky-400
-                   focus:border-sky-500 focus:text-sky-400 focus:outline-none"
-      >
-        i
-      </button>
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1.5 w-56
-                   -translate-x-1/2 rounded-lg border border-white/10 bg-ink-950 px-2.5
-                   py-2 text-[11px] leading-snug text-slate-300 opacity-0 shadow-xl
-                   shadow-black/60 transition-opacity group-hover/info:opacity-100
-                   group-focus-within/info:opacity-100"
-      >
-        {text}
-      </span>
-    </span>
   )
 }
 

@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  fetchAccountPositions, fetchOpenPositions, fetchRecentCloses, placeManualClose,
+  fetchAccountPositions, fetchOpenPositions, fetchRecentCloses, fetchTradeHistory,
+  placeManualClose,
   fetchAccounts, fetchDailyPnl,
   fetchStrategyConfig,
 } from '../lib/supabase'
@@ -9,6 +10,7 @@ import {
 } from '../lib/delta'
 import { atrSeries, atrAt, lookbackHours } from '../lib/atr'
 import { summarise, fmt } from '../lib/stats'
+import InfoDot from './InfoDot'
 import ExportTrades from './ExportTrades'
 
 /**
@@ -62,6 +64,21 @@ function expiryOf(roundId) {
 
 // The set of legs a list holds, as one comparable string.
 const idsOf = (rows) => rows.map((p) => p.id).sort().join(',')
+
+// A calendar day in India time, as YYYY-MM-DD - the same days the Daily table
+// and the daily_account_pnl view use.
+const istDate = (t) => new Date(t).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+
+// Performance period, remembered per side. Live opens on today - what a
+// session is judged by; paper on all time, where the long run is the point.
+const RANGE_KEY = 'predict.perfRange'
+const readRange = (mode) => {
+  try {
+    const v = localStorage.getItem(`${RANGE_KEY}.${mode}`)
+    if (v === 'today' || v === 'all') return v
+  } catch { /* private mode */ }
+  return mode === 'live' ? 'today' : 'all'
+}
 
 const clockLabel = (d) => (d
   ? d.toLocaleTimeString('en-US', {
@@ -608,8 +625,15 @@ function legName(p) {
   return spot > strike ? 'wing_high' : 'wing_low'
 }
 
+// What "adopted" means, for the (i) beside it in the history.
+const ADOPTED_NOTE = 'Recorded from Delta. Delta was slow to confirm this order, so '
+  + 'the bot read the filled trade straight from Delta a few seconds later and '
+  + 'added it. A real trade, counted normally - nothing was bought twice.'
+
 function TradesTable({ positions, atrFor, atrLabel }) {
   const [openRound, setOpenRound] = useState(null)
+  const [outcome, setOutcome] = useState('all')
+  const [period, setPeriod] = useState('all')
   // Which legs have their fill breakdown open. A set rather than a single
   // id: a round can have more than one leg worth comparing at a time.
   const [openFills, setOpenFills] = useState(() => new Set())
@@ -684,12 +708,58 @@ function TradesTable({ positions, atrFor, atrLabel }) {
     return <p className="py-10 text-center text-sm text-slate-600">No completed trades yet.</p>
   }
 
+  // Days are the round's finish in India time, as in the Daily table.
+  const today = istDate(Date.now())
+  const yesterday = istDate(Date.now() - 86400000)
+  const weekAgo = Date.now() - 7 * 86400000
+  const shown = rounds.filter((r) => {
+    if (outcome === 'won' && !(r.pnl >= 0)) return false
+    if (outcome === 'lost' && !(r.pnl < 0)) return false
+    if (outcome === 'early' && !r.closedEarly) return false
+    if (period === 'all') return true
+    if (!r.closedAt) return false
+    if (period === 'today') return istDate(r.closedAt) === today
+    if (period === 'yesterday') return istDate(r.closedAt) === yesterday
+    return r.closedAt >= weekAgo
+  })
+  const shownPnl = shown.reduce((a, r) => a + r.pnl, 0)
+
   const when = (d) => (d
     ? d.toLocaleString('en-US', { timeZone: IST, day: 'numeric', month: 'short',
                                   hour: 'numeric', minute: '2-digit', hour12: true })
     : '—')
 
+  const chip = (on) => `rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+    on ? 'bg-white/10 text-slate-100' : 'text-slate-500 hover:text-slate-300'}`
+
   return (
+    <>
+    <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="flex gap-1" role="group" aria-label="Outcome">
+        {[['all', 'All'], ['won', 'Won'], ['lost', 'Lost'], ['early', 'Closed early']]
+          .map(([k, label]) => (
+            <button key={k} onClick={() => setOutcome(k)} className={chip(outcome === k)}
+                    aria-pressed={outcome === k}>{label}</button>
+          ))}
+      </div>
+      <div className="flex gap-1" role="group" aria-label="Period">
+        {[['all', 'All dates'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', '7 days']]
+          .map(([k, label]) => (
+            <button key={k} onClick={() => setPeriod(k)} className={chip(period === k)}
+                    aria-pressed={period === k}>{label}</button>
+          ))}
+      </div>
+      <span className="nums ml-auto text-[11px] text-slate-500">
+        {shown.length} round{shown.length === 1 ? '' : 's'}
+        {(outcome !== 'all' || period !== 'all') && shown.length > 0 && (
+          <> · <span className={shownPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+            {signed(shownPnl)}</span></>
+        )}
+      </span>
+    </div>
+    {!shown.length ? (
+      <p className="py-10 text-center text-sm text-slate-600">No rounds match these filters.</p>
+    ) : (
     <div className="-mx-4 overflow-x-auto">
       <table className="w-full min-w-[1040px] border-collapse text-sm">
         <thead>
@@ -709,7 +779,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
           </tr>
         </thead>
         <tbody>
-          {rounds.map((r) => {
+          {shown.map((r) => {
             const expanded = openRound === r.roundId
             return (
               <Fragment key={r.roundId}>
@@ -799,6 +869,11 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                         {p.side === 'call' ? 'Y' : 'N'}
                       </span>
                       {legName(p)}
+                      {p.role === 'adopted' && (
+                        <span className="ml-1.5">
+                          <InfoDot side="right" text={ADOPTED_NOTE} />
+                        </span>
+                      )}
                     </td>
                     <td className="nums px-2 py-1.5 text-slate-400">
                       {Number(p.strike).toLocaleString('en-US')}
@@ -891,6 +966,8 @@ function TradesTable({ positions, atrFor, atrLabel }) {
         </tbody>
       </table>
     </div>
+    )}
+    </>
   )
 }
 
@@ -945,6 +1022,18 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
   const fullAt = useRef(0)
   const openIds = useRef('')
 
+  // Answers for an account no longer on screen are dropped. A slow 500-leg
+  // read for the previous account could land after the new account's, and
+  // with full reads 30s apart the wrong book then stayed up for half a
+  // minute - another account's figures under this one's name.
+  const shownAccount = useRef(accountId)
+  useEffect(() => {
+    shownAccount.current = accountId
+    setPositions([])
+    openIds.current = ''
+    fullAt.current = 0
+  }, [accountId])
+
   const fail = useCallback((e) => {
     const msg = `${e?.message ?? e}`
     // account_id arrives with migration 004; until then show nothing
@@ -958,6 +1047,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
     fullAt.current = Date.now()
     fetchAccountPositions(accountId)
       .then((rows) => {
+        if (shownAccount.current !== accountId) return
         openIds.current = idsOf(rows.filter((p) => p.status === 'open'))
         setPositions(rows)
         setError(null)
@@ -970,6 +1060,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
     if (Date.now() - fullAt.current >= 30000) { loadAll(); return }
     fetchOpenPositions(accountId)
       .then((open) => {
+        if (shownAccount.current !== accountId) return
         if (idsOf(open) !== openIds.current) { loadAll(); return }
         // Same legs still open: refresh just those rows in place.
         const fresh = new Map(open.map((p) => [p.id, p]))
@@ -1158,11 +1249,46 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
   // bot one in the same book. A live account cannot take a manual trade at
   // all, so the split became a control that only ever hid some of the
   // answer - and the headline numbers should be the account's, whole.
-  const scoped = positions
+  //
+  // Today or all time. "All time" was the default and the only choice, and it
+  // was not all time: the list above stops at the newest 500 legs, so any
+  // account past that showed lifetime figures for its last 500 only. All time
+  // now reads the whole history once per account and folds in whatever has
+  // closed since from the regular poll - never a full reload per close.
+  const [range, setRange] = useState(() => readRange(mode))
+  useEffect(() => { setRange(readRange(mode)) }, [mode])
+  const pickRange = (r) => {
+    setRange(r)
+    try { localStorage.setItem(`${RANGE_KEY}.${mode}`, r) } catch { /* private mode */ }
+  }
+
+  const [history, setHistory] = useState(null)
+  useEffect(() => {
+    setHistory(null)
+    if (range !== 'all' || !accountId) return
+    let alive = true
+    fetchTradeHistory(accountId)
+      .then((rows) => { if (alive) setHistory(rows) })
+      .catch(() => { if (alive) setHistory([]) })
+    return () => { alive = false }
+  }, [range, accountId])
+
+  const scoped = useMemo(() => {
+    if (range === 'today') {
+      const today = istDate(Date.now())
+      return positions.filter((p) => p.status === 'open'
+        || (p.exit_time && istDate(p.exit_time) === today))
+    }
+    if (!history) return positions
+    const byId = new Map(history.map((p) => [p.id, p]))
+    for (const p of positions) byId.set(p.id, p)   // newer copy wins
+    return [...byId.values()]
+  }, [range, positions, history])
 
   const perf = useMemo(
     () => summarise(scoped, Number(account?.starting_balance) || 0),
     [scoped, account?.starting_balance])
+  const isToday = range === 'today'
 
   // Unrealised, from the depth-walked marks already fetched for the cards, so
   // this is what the book would actually pay to close everything right now -
@@ -1185,6 +1311,23 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
           Performance
         </h3>
+        <div role="tablist" aria-label="Performance period"
+             className="flex rounded-lg border border-white/10 bg-ink-950 p-0.5">
+          {[['today', 'Today'], ['all', 'All time']].map(([key, label]) => (
+            <button
+              key={key} role="tab" aria-selected={range === key}
+              onClick={() => pickRange(key)}
+              title={key === 'today'
+                ? 'Trades that finished today, India time - the same days as the Daily table'
+                : 'Every trade this account has made'}
+              className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                range === key ? 'bg-sky-500/20 text-sky-300'
+                  : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 border-b border-white/5 px-4 pb-3 pt-2
@@ -1193,7 +1336,9 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
           label="Realised P&L"
           value={fmt.usd(perf.totalPnl)}
           tone={perf.totalPnl}
-          sub={`${fmt.pct(perf.returnPct)} of starting`}
+          sub={isToday ? `${perf.trades} leg${perf.trades === 1 ? '' : 's'} closed today`
+            : range === 'all' && !history ? 'loading full history…'
+              : `${fmt.pct(perf.returnPct)} of starting`}
         />
         <Stat
           label="Unrealised"
@@ -1207,7 +1352,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         <Stat
           label="Round win rate"
           value={perf.rounds ? fmt.pct(perf.roundWinRate, 0) : '—'}
-          sub={perf.rounds ? `${perf.rounds} round${perf.rounds > 1 ? 's' : ''} settled` : ''}
+          sub={perf.rounds ? `${perf.rounds} round${perf.rounds > 1 ? 's' : ''} settled`
+            : isToday ? 'none finished today' : ''}
         />
         <Stat
           label="Avg / round"
@@ -1229,7 +1375,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
           label="Max drawdown"
           value={fmt.usd(perf.maxDrawdown)}
           tone={perf.maxDrawdown ? -1 : undefined}
-          sub="worst run of rounds"
+          sub={isToday ? 'worst run today' : 'worst run of rounds'}
         />
       </div>
 

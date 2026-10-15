@@ -50,6 +50,7 @@ class NullStore:
     def pending_manual_orders(self, *a: Any, **k: Any) -> list: return []
     def adoptable_positions(self, *a: Any, **k: Any) -> list: return []
     def open_symbols(self, *a: Any, **k: Any) -> set: return set()
+    def set_delta_status(self, *a: Any, **k: Any) -> None: return None
     def strategy_configs(self, *a: Any, **k: Any) -> list: return []
     def accounts(self, *a: Any, **k: Any) -> list: return []
     def entered_round_keys(self, *a: Any, **k: Any) -> list: return []
@@ -82,6 +83,8 @@ class SupabaseStore:
         self._missing_columns: Dict[str, float] = {}
         # Overwrite one snapshot row per run; off if migration 028 is missing.
         self._snapshot_upsert = True
+        # set_delta_status pauses until this time if migration 029 is missing.
+        self._delta_status_off_until = 0.0
         self.session = requests.Session()
         self.session.headers.update({
             "apikey": service_key,
@@ -616,6 +619,37 @@ class SupabaseStore:
         with self._lock:
             self._patch("accounts", {"balance": float(balance)},
                         {"id": "eq.%d" % int(account_id)})
+
+    def set_delta_status(self, account_id: int, issue: Optional[str]) -> None:
+        """What the last comparison with Delta found, for the dashboard's
+        health bar: when it ran, and what disagreed (None when nothing did).
+
+        Migration 029 adds the columns. Until it runs, the first refusal turns
+        this off for ten minutes rather than logging a failed write every
+        minute per account.
+        """
+        if not account_id or time.time() < self._delta_status_off_until:
+            return
+        payload = {"delta_checked_at": datetime.now(timezone.utc).isoformat(),
+                   "delta_issue": (issue or None)}
+        with self._lock:
+            try:
+                r = self.session.patch("%s/accounts" % self.base, json=payload,
+                                       params={"id": "eq.%d" % int(account_id)},
+                                       timeout=self.timeout,
+                                       headers={"Prefer": "return=minimal"})
+            except Exception as exc:  # noqa: BLE001
+                self._note_failure("accounts delta status -> %s" % exc)
+                return
+            if r.status_code < 400:
+                self._note_ok()
+            elif "delta_checked_at" in r.text or "delta_issue" in r.text:
+                self._delta_status_off_until = time.time() + 600
+                log.warning("accounts has no delta_checked_at/delta_issue yet - "
+                            "run migration 029; the health bar shows nothing until then")
+            else:
+                self._note_failure("accounts delta status -> %s %s"
+                                   % (r.status_code, r.text[:200]))
 
     def finish_run(self, cash: float, status: str = "stopped") -> None:
         if self.run_id is None:

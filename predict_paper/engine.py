@@ -1420,6 +1420,11 @@ class Engine:
                 # what Delta holds, and that is worth a person's attention.
                 n = self._reconcile_fails.get(aid, 0) + 1
                 self._reconcile_fails[aid] = n
+                # The dashboard's health bar. Not on the first miss - those are
+                # routine and gone a minute later.
+                if n >= 3:
+                    self.store.set_delta_status(
+                        aid, "Cannot reach Delta - %d checks in a row failed" % n)
                 if n == 5:
                     telegram.notify_failure(
                         telegram.AMBER, (self.accounts[aid].name if aid in self.accounts else str(aid)),
@@ -1427,6 +1432,10 @@ class Engine:
                         "positions may be out of sync", str(exc), chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""))
                 continue
             self._reconcile_fails[aid] = 0
+            # Disagreements still standing after this pass, for the dashboard.
+            # Adoptions and size corrections are not among them: by the end of
+            # the pass the record already matches.
+            issues: List[str] = []
 
             on_delta: Dict[str, float] = {}
             entry_of: Dict[str, float] = {}
@@ -1468,6 +1477,7 @@ class Engine:
                 price = entry_of.get(sym) or 0.0
 
                 if held is None and sym in done:
+                    issues.append("%s is closed here but still open on Delta" % sym)
                     # Said once per symbol, then held: this repeats every
                     # pass until the contract settles, and the point is to be
                     # noticed rather than to fill the log.
@@ -1570,6 +1580,12 @@ class Engine:
                         expiry = expiry_code_to_dt(meta["expiry_code"])
                 if expiry is not None and (expiry - now).total_seconds() <= 0:
                     continue        # expired; settlement is settle_expired's job
+                # A sale Delta has not answered for yet is being looked up and
+                # closes the record within a cycle or two; not a disagreement.
+                executor = getattr(self.accounts.get(aid), "executor", None)
+                if executor is not None and executor.has_pending(sym):
+                    continue
+                issues.append("%s is open here but not on Delta" % sym)
                 if (aid, sym) in self._adopted_live:
                     continue
                 self._adopted_live.add((aid, sym))
@@ -1579,6 +1595,8 @@ class Engine:
                     telegram.AMBER, (self.accounts[aid].name if aid in self.accounts else str(aid)),
                     "%s is open in the engine but NOT on Delta - engine is not "
                     "closing it; check Delta" % sym, chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""))
+
+            self.store.set_delta_status(aid, "; ".join(issues) or None)
 
     # ---- dashboard feed -------------------------------------------------
     def _leg_payload(self, leg: Optional[Contract], max_price: float) -> Optional[Dict]:
