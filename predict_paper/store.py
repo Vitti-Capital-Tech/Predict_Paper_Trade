@@ -80,6 +80,8 @@ class SupabaseStore:
         # because it had decided once and never asked again - which looks
         # exactly like the feature being broken.
         self._missing_columns: Dict[str, float] = {}
+        # Overwrite one snapshot row per run; off if migration 028 is missing.
+        self._snapshot_upsert = True
         self.session = requests.Session()
         self.session.headers.update({
             "apikey": service_key,
@@ -255,15 +257,45 @@ class SupabaseStore:
 
     def snapshot(self, spot: Optional[float], atr: Optional[float],
                  atr_pass: bool, rounds: List[Dict[str, Any]]) -> None:
+        """The latest view of the market - one row per run, overwritten.
+
+        It was a new row every poll, about every 2.7s at 4 KB, and only the
+        newest is ever read. The prune trigger meant to bound it deleted only
+        the current run's old rows, so every restart left a day's worth behind:
+        390,000 rows, the larger half of a database that outgrew its 500 MB
+        plan. Migration 028 makes run_id unique so this can upsert.
+
+        Until 028 has run there is nothing to upsert against; Postgres says so
+        with 42P10, and this goes back to inserting rather than counting a
+        schema gap as a database outage.
+        """
         if self.run_id is None:
             return
+        row = {"run_id": self.run_id,
+               "ts": datetime.now(timezone.utc).isoformat(),
+               "spot": spot, "atr": atr, "atr_pass": atr_pass,
+               "rounds": rounds}
         with self._lock:
-            self._post("market_snapshots", {
-                "run_id": self.run_id,
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "spot": spot, "atr": atr, "atr_pass": atr_pass,
-                "rounds": rounds,
-            })
+            if self._snapshot_upsert:
+                try:
+                    r = self.session.post(
+                        "%s/market_snapshots" % self.base, json=row,
+                        timeout=self.timeout, params={"on_conflict": "run_id"},
+                        headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
+                except Exception as exc:  # noqa: BLE001
+                    self._note_failure("market_snapshots -> %s" % exc)
+                    return
+                if r.status_code < 400:
+                    self._note_ok()
+                    return
+                if "42P10" not in r.text:
+                    self._note_failure("market_snapshots -> %s %s"
+                                       % (r.status_code, r.text[:200]))
+                    return
+                self._snapshot_upsert = False
+                log.warning("market_snapshots has no unique run_id yet - run "
+                            "migration 028; inserting until then")
+            self._post("market_snapshots", row)
 
     def heartbeat(self, cash: float) -> None:
         if self.run_id is None:

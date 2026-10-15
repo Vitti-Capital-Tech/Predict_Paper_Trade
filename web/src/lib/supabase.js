@@ -219,6 +219,17 @@ export async function fetchAccountPositions(accountId) {
   return data ?? []
 }
 
+/** Only the legs still open - the cheap read the dashboard polls every tick. */
+export async function fetchOpenPositions(accountId) {
+  const { data, error } = await supabase
+    .from('positions')
+    .select('*')
+    .eq('account_id', accountId)
+    .eq('status', 'open')
+  if (error) throw error
+  return data ?? []
+}
+
 /**
  * Every finished leg, for export.
  *

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -112,6 +113,8 @@ WINGS = ("wing_low", "wing_high")
 # How often the record is checked against the exchange's own view.
 LIVE_RECONCILE_SEC = 60.0
 
+_DIGITS = re.compile(r"[0-9]+(?:\.[0-9]+)?")
+
 LIVE_BALANCE_SEC = 30.0
 
 TOPUP_FLOOR_FRAC = 0.10
@@ -190,6 +193,8 @@ class Engine:
         self._products_at: float = 0.0
         self._seen_rounds: set = set()
         self._logged_rejects: set = set()
+        # (round, reason shape) already written to the events table.
+        self._skips_written: set = set()
         self._expiry_by_symbol: Dict[str, datetime] = {}
         # Last spot seen per symbol, so a settled position can report the
         # underlying price that produced its outcome.
@@ -617,6 +622,27 @@ class Engine:
                 getattr(owner, "chat_id", ""))
         return True
 
+    def _log_skip(self, round_id: Optional[str] = None, reasons=None,
+                  **payload) -> None:
+        """Record why a round was not entered - once per round and kind of
+        reason, not once per tick.
+
+        Reasons carry live numbers - "too close to expiry (412s < 420s)",
+        a spot price, an ask - so the same reason read as new every second.
+        That was 355,000 rows in a month, most of the table that took the
+        database past its 500 MB plan. The numbers are ignored when deciding
+        whether a reason is new, and kept in the row that is written.
+        """
+        shape = tuple(_DIGITS.sub("#", str(r)) for r in (reasons or []))
+        key = (round_id, shape)
+        if key in self._skips_written:
+            return
+        if len(self._skips_written) > 5000:       # rounds roll over; bounded
+            self._skips_written.clear()
+        self._skips_written.add(key)
+        self.portfolio.log_event("skip", round_id=round_id, reasons=reasons,
+                                 **payload)
+
     def _open_leg(self, aid: Optional[int], round_id: str, symbol: str):
         """This account's open position on a contract, if it already holds one."""
         for p in self.portfolio.open_positions:
@@ -650,7 +676,7 @@ class Engine:
             if key not in self._logged_rejects:
                 self._logged_rejects.add(key)
                 log.info("SKIP   %-18s %s", rnd.round_id, "; ".join(decision.reasons))
-                self.portfolio.log_event("skip", round_id=rnd.round_id,
+                self._log_skip(round_id=rnd.round_id,
                                          reasons=decision.reasons, atr=atr,
                                          spot=decision.spot)
             return
@@ -725,7 +751,7 @@ class Engine:
             ok, why = acct.fills.spread_ok(leg.contract.best_bid, leg.contract.best_ask)
             if not ok:
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, why)
-                self.portfolio.log_event("skip", round_id=rnd.round_id,
+                self._log_skip(round_id=rnd.round_id,
                                          reasons=["%s %s" % (leg.role, why)])
                 if cfg.entry.require_both_wings:
                     return
@@ -767,8 +793,7 @@ class Engine:
                 if key not in self._logged_rejects:
                     self._logged_rejects.add(key)
                     log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, msg)
-                    self.portfolio.log_event(
-                        "skip", round_id=rnd.round_id,
+                    self._log_skip(round_id=rnd.round_id,
                         reasons=["%s %s" % (leg.role, msg)])
                 if cfg.entry.require_both_wings:
                     return
@@ -823,7 +848,7 @@ class Engine:
                                            leg.contract.best_ask, leg.contract.mark_price)
             if not fill.filled:
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, fill.reason)
-                self.portfolio.log_event("skip", round_id=rnd.round_id,
+                self._log_skip(round_id=rnd.round_id,
                                          reasons=["%s %s" % (leg.role, fill.reason)])
                 if cfg.entry.require_both_wings:
                     return
@@ -833,7 +858,7 @@ class Engine:
                 msg = "slippage %.4f exceeds cap %.4f" % (
                     fill.avg_price - leg.quoted_price, cap)
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, msg)
-                self.portfolio.log_event("skip", round_id=rnd.round_id,
+                self._log_skip(round_id=rnd.round_id,
                                          reasons=["%s %s" % (leg.role, msg)])
                 if cfg.entry.require_both_wings:
                     return
@@ -845,7 +870,7 @@ class Engine:
                 msg = "slippage broke odds: avg %.4f > max %.4f" % (
                     fill.avg_price, leg.max_price)
                 log.info("SKIP   %-18s %s: %s", rnd.round_id, leg.role, msg)
-                self.portfolio.log_event("skip", round_id=rnd.round_id,
+                self._log_skip(round_id=rnd.round_id,
                                          reasons=["%s %s" % (leg.role, msg)])
                 if cfg.entry.require_both_wings:
                     return
@@ -869,7 +894,7 @@ class Engine:
                 msg = ("middle dropped: needs both wings, %s did not fill"
                        % " and ".join(missing))
                 log.info("SKIP   %-18s %s", rnd.round_id, msg)
-                self.portfolio.log_event("skip", round_id=rnd.round_id, reasons=[msg])
+                self._log_skip(round_id=rnd.round_id, reasons=[msg])
                 planned = [(l, f) for l, f in planned if l.role != "middle"]
 
         if not planned:
@@ -896,8 +921,7 @@ class Engine:
             if cap is not None and total > cap:
                 log.info("SKIP   %-18s cost %.2f exceeds cap %.2f",
                          rnd.round_id, total, cap)
-                self.portfolio.log_event(
-                    "skip", round_id=rnd.round_id,
+                self._log_skip(round_id=rnd.round_id,
                     reasons=["cost %.2f > cap %.2f" % (total, cap)])
                 return
             if total > acct.balance:

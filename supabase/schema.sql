@@ -92,25 +92,12 @@ create table if not exists public.market_snapshots (
 
 create index if not exists snapshots_run_ts_idx on public.market_snapshots (run_id, ts desc);
 
--- Keep the snapshot table from growing without bound.
-create or replace function public.prune_market_snapshots()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  delete from public.market_snapshots
-   where run_id = new.run_id
-     and ts < now() - interval '24 hours';
-  return null;
-end;
-$$;
-
-drop trigger if exists prune_snapshots on public.market_snapshots;
-create trigger prune_snapshots
-  after insert on public.market_snapshots
-  for each row execute function public.prune_market_snapshots();
+-- One row per run, overwritten by the worker's upsert. This replaced a
+-- per-insert prune trigger that only ever pruned the current run, so each
+-- restart left a day of rows behind - see migration 028, which also schedules
+-- the nightly trim of events.
+create unique index if not exists market_snapshots_run_key
+  on public.market_snapshots (run_id);
 
 -- ----------------------------------------------------------------- RLS ----
 alter table public.runs             enable row level security;

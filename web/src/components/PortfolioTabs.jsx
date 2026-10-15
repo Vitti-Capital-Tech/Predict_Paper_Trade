@@ -1,6 +1,6 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  fetchAccountPositions, fetchRecentCloses, placeManualClose,
+  fetchAccountPositions, fetchOpenPositions, fetchRecentCloses, placeManualClose,
   fetchAccounts, fetchDailyPnl,
   fetchStrategyConfig,
 } from '../lib/supabase'
@@ -59,6 +59,9 @@ function expiryOf(roundId) {
   const code = String(roundId ?? '').split('-').pop()
   return /^\d{10}$/.test(code) ? expiryCodeToDate(code) : null
 }
+
+// The set of legs a list holds, as one comparable string.
+const idsOf = (rows) => rows.map((p) => p.id).sort().join(',')
 
 const clockLabel = (d) => (d
   ? d.toLocaleTimeString('en-US', {
@@ -934,27 +937,56 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
     return () => { alive = false }
   }, [accountId, refreshKey])
 
+  // The whole list (up to 500 legs, ~300 KB) was fetched every 2.5s - about
+  // 10 GB a day for one open tab, against a plan that allows 5 GB a month. Now
+  // each tick reads only the open legs, a few rows; the full list is fetched
+  // every 30s, and at once whenever the set of open legs changes - an entry or
+  // an exit - so a trade still appears or closes on screen within one tick.
+  const fullAt = useRef(0)
+  const openIds = useRef('')
+
+  const fail = useCallback((e) => {
+    const msg = `${e?.message ?? e}`
+    // account_id arrives with migration 004; until then show nothing
+    // rather than an error the user cannot act on from here.
+    setError(/account_id|column/i.test(msg)
+      ? 'Run migration 004 to group trades by account.' : msg)
+  }, [])
+
+  const loadAll = useCallback(() => {
+    if (!accountId) { setPositions([]); return }
+    fullAt.current = Date.now()
+    fetchAccountPositions(accountId)
+      .then((rows) => {
+        openIds.current = idsOf(rows.filter((p) => p.status === 'open'))
+        setPositions(rows)
+        setError(null)
+      })
+      .catch(fail)
+  }, [accountId, fail])
+
   const load = useCallback(() => {
     if (!accountId) { setPositions([]); return }
-    fetchAccountPositions(accountId)
-      .then((rows) => { setPositions(rows); setError(null) })
-      .catch((e) => {
-        const msg = `${e?.message ?? e}`
-        // account_id arrives with migration 004; until then show nothing
-        // rather than an error the user cannot act on from here.
-        setError(/account_id|column/i.test(msg)
-          ? 'Run migration 004 to group trades by account.' : msg)
+    if (Date.now() - fullAt.current >= 30000) { loadAll(); return }
+    fetchOpenPositions(accountId)
+      .then((open) => {
+        if (idsOf(open) !== openIds.current) { loadAll(); return }
+        // Same legs still open: refresh just those rows in place.
+        const fresh = new Map(open.map((p) => [p.id, p]))
+        setPositions((prev) => prev.map((p) => fresh.get(p.id) ?? p))
+        setError(null)
       })
-  }, [accountId])
+      .catch(fail)
+  }, [accountId, loadAll, fail])
 
   useEffect(() => {
-    load()
+    loadAll()
     const t = setInterval(load, 2500)
     return () => clearInterval(t)
-  }, [load])
+  }, [load, loadAll])
 
   // A fill just landed; don't make the user wait for the next tick.
-  useEffect(() => { if (refreshKey) load() }, [refreshKey, load])
+  useEffect(() => { if (refreshKey) loadAll() }, [refreshKey, loadAll])
 
   // Candles for the ATR shown in trade history. One request per underlying
   // covering the whole history, rather than one per trade — a few hundred legs
