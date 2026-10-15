@@ -6,7 +6,8 @@ Two kinds of message, routed differently:
     admin group (TELEGRAM_ERROR_CHAT_ID), which watches every account, AND to
     the account's own chat, so the owner hears about their own account too.
     Faults with no account - the database, the engine itself - go to the admin
-    group only.
+    group only. Warnings - things already handled - skip the group and go to
+    the account's chat alone; the group asked for bugs only.
   * Trades - an entry, an exit, a settlement. They go to the account's own
     chat, so each account's owner sees their own book and nobody else's.
 
@@ -131,21 +132,32 @@ def _stamp() -> str:
 
 
 def notify_failure(level: str, account: str, what: str, error: str = "",
-                   extra: str = "", chat_id: str = "") -> None:
+                   extra: str = "", chat_id: str = "",
+                   warning: bool = False) -> None:
     """An error a person may need to act on.
 
     Laid out like the Option_Scope handbook - Account, What, Error, an optional
     detail line, the time - so the same handbook reading works for both.
+
+    `warning` marks something the engine has already handled - a buy Delta
+    was slow to confirm, which reconciliation then finds - as against a bug.
+    The admin group asked for bugs only, so a warning goes to the account's
+    own chat and nowhere else.
     """
     s = _get()
     if not s:
         return
-    # Both: the admin group watches every account, and the owner hears about
-    # their own. A chat that is both - the owner linked the admin group - gets
-    # it once. Neither set falls back to the default chat.
-    dests = [d for d in dict.fromkeys([ERROR_CHAT, chat_id]) if d] or (
-        [DEFAULT_CHAT] if DEFAULT_CHAT else [])
-    lines = ["%s <b>LIVE TRADING %s</b>" % (_ICON.get(level, ""), _LABEL.get(level, "ALERT")),
+    if warning:
+        dests = [chat_id] if chat_id else []
+        if not dests:
+            return
+    else:
+        # Both: the admin group watches every account, and the owner hears
+        # about their own. A chat that is both - the owner linked the admin
+        # group - gets it once. Neither set falls back to the default chat.
+        dests = [d for d in dict.fromkeys([ERROR_CHAT, chat_id]) if d] or (
+            [DEFAULT_CHAT] if DEFAULT_CHAT else [])
+    lines = ["%s <b>DELTA GLOBAL %s</b>" % (_ICON.get(level, ""), _LABEL.get(level, "ALERT")),
              "<b>Account:</b> %s" % escape(account or "-"),
              "<b>What:</b> %s" % escape(what)]
     if error:

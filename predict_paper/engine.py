@@ -1485,12 +1485,24 @@ class Engine:
                         continue
                     log.warning("LIVE   ADOPT %s qty=%.0f @ %.4f - on Delta, "
                                 "missing here", sym, size, price)
+                    # After a buy Delta never answered, this is the safety net
+                    # doing its job - a warning, kept out of the admin group.
+                    # Without one it is unexplained, and on 13 Oct it was a
+                    # bug, so it still goes to the group.
+                    executor = getattr(self.accounts.get(aid), "executor", None)
+                    expected = (executor is not None
+                                and sym in getattr(executor, "unconfirmed_buys", ()))
                     telegram.notify_failure(
                         telegram.AMBER, (self.accounts[aid].name if aid in self.accounts else str(aid)),
-                        "Untracked position ADOPTED (%s, size %.0f) - it was on "
-                        "Delta but missing from the engine; now recorded and "
-                        "managed. If nobody traded by hand, tell the developer."
-                        % (sym, size), chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""))
+                        ("Delta was slow to confirm a buy (%s, size %.0f) - found "
+                         "on Delta and recorded; nothing to do" % (sym, size))
+                        if expected else
+                        ("Untracked position ADOPTED (%s, size %.0f) - it was on "
+                         "Delta but missing from the engine; now recorded and "
+                         "managed. If nobody traded by hand, tell the developer."
+                         % (sym, size)),
+                        chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""),
+                        warning=expected)
                     fill = LiveFill(True, qty=size, avg_price=price,
                                     top_price=price, requested_qty=size,
                                     levels_consumed=1)

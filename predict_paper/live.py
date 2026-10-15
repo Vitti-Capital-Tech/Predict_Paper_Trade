@@ -96,6 +96,9 @@ class LiveExecutor:
         # Symbols Delta says this account no longer holds, with no sale of
         # ours to account for it. Not sold again - see sell().
         self._flat: set = set()
+        # Symbols with a buy Delta never answered. When reconciliation then
+        # finds the position, that is the expected ending, not a bug.
+        self.unconfirmed_buys: set = set()
 
     def tag(self, round_id: str, role: str, attempt: int = 0) -> str:
         """A deterministic id for an intended order.
@@ -149,32 +152,18 @@ class LiveExecutor:
                 # accepted. Reported as unconfirmed so the caller stops
                 # trying: retrying here is how one leg becomes two, and only
                 # the deterministic client_order_id has been preventing it.
-                log.error("LIVE   %-14s order UNCONFIRMED %s qty=%d @ %s: %s "
-                          "- may or may not have reached the exchange",
-                          self.name, symbol, qty, price, exc)
-                telegram.notify_failure(
-                    telegram.AMBER, self.name,
-                    "Order UNCONFIRMED (buy %s) - may be open on Delta" % symbol,
-                    str(exc), "qty %d @ %s" % (qty, price), self.chat_id)
-                return LiveFill(False, reason="unconfirmed: %s" % exc,
-                                unconfirmed=True)
+                return self._buy_unanswered(symbol, qty, price, exc)
             log.error("LIVE   %-14s order REFUSED %s qty=%d @ %s: %s",
                       self.name, symbol, qty, price, exc)
+            # Nothing was opened, and the next cycle tries again: a warning.
             telegram.notify_failure(
                 telegram.YELLOW, self.name,
                 "Order send FAILED (buy %s) - nothing was opened" % symbol,
-                str(exc), "qty %d @ %s" % (qty, price), self.chat_id)
+                str(exc), "qty %d @ %s" % (qty, price), self.chat_id,
+                warning=True)
             return LiveFill(False, reason=str(exc))
         except Exception as exc:  # noqa: BLE001
-            log.error("LIVE   %-14s order UNCONFIRMED %s qty=%d @ %s: %s "
-                      "- may or may not have reached the exchange",
-                      self.name, symbol, qty, price, exc)
-            telegram.notify_failure(
-                telegram.AMBER, self.name,
-                "Order UNCONFIRMED (buy %s) - may be open on Delta" % symbol,
-                str(exc), "qty %d @ %s" % (qty, price), self.chat_id)
-            return LiveFill(False, reason="unconfirmed: %s" % exc,
-                            unconfirmed=True)
+            return self._buy_unanswered(symbol, qty, price, exc)
 
         filled = _f(res.get("size")) - _f(res.get("unfilled_size"))
         avg = _f(res.get("average_fill_price"))
@@ -307,6 +296,24 @@ class LiveExecutor:
                         levels_consumed=1, requested_qty=float(qty))
 
     # ---- when the answer is missing or surprising -------------------------
+    def _buy_unanswered(self, symbol: str, qty: int, price: str,
+                        exc: Exception) -> LiveFill:
+        """A buy went out and no answer came back. Treated as held so the
+        caller stops trying - retrying is how one leg becomes two - and left
+        for reconciliation, which finds it on Delta within a minute if it
+        filled. Remembered, so that adoption is known to be this and not a
+        bug."""
+        log.error("LIVE   %-14s order UNCONFIRMED %s qty=%d @ %s: %s "
+                  "- may or may not have reached the exchange",
+                  self.name, symbol, qty, price, exc)
+        self.unconfirmed_buys.add(symbol)
+        telegram.notify_failure(
+            telegram.AMBER, self.name,
+            "Order UNCONFIRMED (buy %s) - may be open on Delta" % symbol,
+            str(exc), "qty %d @ %s" % (qty, price), self.chat_id,
+            warning=True)
+        return LiveFill(False, reason="unconfirmed: %s" % exc, unconfirmed=True)
+
     def has_pending(self, symbol: str) -> bool:
         return symbol in self._pending_sells
 
