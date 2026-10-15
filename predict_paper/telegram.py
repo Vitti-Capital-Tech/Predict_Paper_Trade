@@ -54,8 +54,11 @@ API = "https://api.telegram.org/bot%s/%s"
 # Levels, as the alert handbook describes them. The icon is the first thing
 # read on a phone lock screen, so it carries the urgency.
 RED, AMBER, YELLOW = "red", "amber", "yellow"
-_ICON = {RED: "\U0001F6A8", AMBER: "⚠️", YELLOW: "\U0001F7E1"}
-_LABEL = {RED: "ACT NOW", AMBER: "CHECK SOON", YELLOW: "NOTE"}
+# AMBER was a warning sign and "CHECK SOON", which the admin group read as
+# just as urgent as red. It is the level for a record to look at, not money at
+# risk now, and says so.
+_ICON = {RED: "\U0001F6A8", AMBER: "\U0001F535", YELLOW: "\U0001F7E1"}
+_LABEL = {RED: "ACT NOW", AMBER: "REVIEW (not urgent)", YELLOW: "NOTE"}
 
 
 def enabled() -> bool:
