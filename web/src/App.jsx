@@ -286,7 +286,7 @@ export default function App() {
           onOrderResolved={() => setTradeTick((n) => n + 1)}
         />
         <PortfolioTabs account={account} accountId={accountId} slippage={slippage}
-                       mode={mode}
+                       mode={mode} allAccounts={accounts}
                        refreshKey={tradeTick} />
       </main>
     </div>

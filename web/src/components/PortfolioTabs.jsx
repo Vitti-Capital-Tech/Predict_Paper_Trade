@@ -11,6 +11,7 @@ import {
 import { atrSeries, atrAt, lookbackHours } from '../lib/atr'
 import { summarise, fmt } from '../lib/stats'
 import InfoDot from './InfoDot'
+import ParityTab from './ParityTab'
 import ExportTrades from './ExportTrades'
 
 /**
@@ -1007,7 +1008,8 @@ function TradesTable({ positions, atrFor, atrLabel }) {
 }
 
 export default function PortfolioTabs({ account, accountId, slippage = 0.05,
-                                        refreshKey = 0, mode = 'paper' }) {
+                                        refreshKey = 0, mode = 'paper',
+                                        allAccounts = [] }) {
   const [tab, setTab] = useState('positions')
   // Which trades the figures describe. Mixing hand-placed trades into a
   // round win rate makes it meaningless: a manual single leg is not a
@@ -1440,7 +1442,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         <div className="flex gap-6">
         {[['positions', 'Positions', open.length],
           ['trades', 'Recent Trades', closed.length],
-          ['daily', 'Daily report', 0]].map(([key, label, n]) => (
+          ['daily', 'Daily report', 0],
+          ['parity', 'Paper vs Live', 0]].map(([key, label, n]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -1516,6 +1519,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
           </>
         ) : tab === 'daily' ? (
           <DailyTable mode={mode} />
+        ) : tab === 'parity' ? (
+          <ParityTab accounts={allAccounts} refreshKey={refreshKey} />
         ) : (
           <TradesTable positions={closed} atrFor={atrFor} atrLabel={atrLabel} />
         )}
