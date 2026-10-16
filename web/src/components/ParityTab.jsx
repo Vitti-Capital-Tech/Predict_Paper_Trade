@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchStrategyConfig, fetchTradeHistory } from '../lib/supabase'
 import { fmt } from '../lib/stats'
+import Dropdown from './Dropdown'
 
 /**
  * Paper vs Live: does a paper account behave like the live one it mirrors?
@@ -99,18 +100,23 @@ export default function ParityTab({ accounts, refreshKey = 0 }) {
     return Object.keys(ca).filter((k) => !NOT_COMPARED.has(k) && !same(ca[k], cb[k]))
   }
 
-  // Default: the first live account, and the paper account with the fewest
-  // differing settings - the twin, where there is one.
+  // Default: JD and its paper twin - the pair made for this comparison.
+  // Otherwise the first live account, and its "<name> twin (paper)" if one
+  // exists, else the paper account with the fewest differing settings.
   useEffect(() => {
-    if (!liveId && live.length) setLiveId(live[0].id)
+    if (!liveId && live.length) setLiveId((live.find((a) => a.name === 'JD') ?? live[0]).id)
   }, [live, liveId])
   useEffect(() => {
-    if (paperId || !liveId || !paper.length || !Object.keys(cfg).length) return
+    if (paperId || !liveId || !paper.length) return
+    const name = accounts.find((a) => a.id === liveId)?.name
+    const twin = paper.find((p) => p.name === `${name} twin (paper)`)
+    if (twin) { setPaperId(twin.id); return }
+    if (!Object.keys(cfg).length) return
     const ranked = paper
       .map((p) => ({ id: p.id, n: diffsOf(liveId, p.id)?.length ?? 99 }))
       .sort((a, b) => a.n - b.n)
     setPaperId(ranked[0]?.id ?? paper[0].id)
-  }, [liveId, paper, cfg, paperId])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [liveId, paper, cfg, paperId, accounts])  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!liveId || !paperId) return
@@ -174,8 +180,6 @@ export default function ParityTab({ accounts, refreshKey = 0 }) {
     }
   }, [legs])
 
-  const select = 'rounded-lg border border-white/10 bg-ink-950 px-2.5 py-1.5 text-xs text-slate-200'
-
   if (!live.length || !paper.length) {
     return <p className="py-10 text-center text-sm text-slate-600">
       Needs at least one live and one paper account.</p>
@@ -186,14 +190,18 @@ export default function ParityTab({ accounts, refreshKey = 0 }) {
       {/* Pair */}
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
         <span className="font-semibold text-rose-300">Live</span>
-        <select className={select} value={liveId ?? ''} onChange={(e) => { setLiveId(Number(e.target.value)); setPaperId(null) }}>
-          {live.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
+        <Dropdown
+          ariaLabel="Live account" size="sm" className="min-w-[8rem]"
+          value={liveId} onChange={(v) => { setLiveId(v); setPaperId(null) }}
+          options={live.map((a) => ({ value: a.id, label: a.name }))}
+        />
         <span className="text-slate-600">vs</span>
         <span className="font-semibold text-sky-300">Paper</span>
-        <select className={select} value={paperId ?? ''} onChange={(e) => setPaperId(Number(e.target.value))}>
-          {paper.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
+        <Dropdown
+          ariaLabel="Paper account" size="sm" className="min-w-[12rem]"
+          value={paperId} onChange={setPaperId}
+          options={paper.map((a) => ({ value: a.id, label: a.name }))}
+        />
         {view?.since && (
           <span className="ml-auto text-[11px] text-slate-500">
             Comparing from {when(view.since)} IST, when both were trading
