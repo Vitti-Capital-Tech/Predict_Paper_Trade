@@ -639,6 +639,22 @@ function legName(p) {
   return spot > strike ? 'wing_high' : 'wing_low'
 }
 
+// A round the bot entered while spot was outside its strike range. Stored as
+// the role `outside` (and shown as the wing it sits on, see legName), which
+// left nothing on screen to tell these trades apart from ordinary ones.
+function OutsideTag() {
+  return (
+    <span
+      title="Spot was outside this round's strike range when it was entered, so the
+             bot bought the strike nearest spot (outside-range trading)."
+      className="ml-1.5 rounded bg-amber-500/15 px-1.5 py-px text-[10px] font-semibold
+                 uppercase tracking-wide text-amber-300"
+    >
+      Outside
+    </span>
+  )
+}
+
 // What "adopted" means, for the (i) beside it in the history.
 const ADOPTED_NOTE = 'Recorded from Delta. Delta was slow to confirm this order, so '
   + 'the bot read the filled trade straight from Delta a few seconds later and '
@@ -714,6 +730,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
         settledAt: settledAt == null ? null : Number(settledAt),
         winners,
         closedEarly: g.legs.some((p) => p.status === 'closed'),
+        outside: g.legs.some((p) => p.role === 'outside'),
       }
     }).sort((a, b) => (b.expiry?.getTime() ?? 0) - (a.expiry?.getTime() ?? 0))
   }, [positions, atrFor])
@@ -799,8 +816,10 @@ function TradesTable({ positions, atrFor, atrLabel }) {
               <Fragment key={r.roundId}>
                 <tr
                   onClick={() => setOpenRound(expanded ? null : r.roundId)}
-                  className="cursor-pointer border-b border-white/5 transition-colors
-                             hover:bg-white/5"
+                  className={`cursor-pointer border-b border-white/5 transition-colors ${
+                    r.outside
+                      ? 'bg-amber-500/[0.07] shadow-[inset_3px_0_0_0_rgb(251_191_36)] hover:bg-amber-500/[0.12]'
+                      : 'hover:bg-white/5'}`}
                 >
                   <td className="px-4 py-2.5 text-slate-200">
                     <span className="mr-1.5 inline-block w-2 text-slate-600">
@@ -814,6 +833,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                       {assetOf(r.roundId)}
                     </span>
                     {r.strikes.map((v) => v.toLocaleString('en-US')).join(' / ')}
+                    {r.outside && <OutsideTag />}
                   </td>
                   <td className="nums px-2 py-2.5 text-slate-400">
                     <div className="text-slate-300">{clockOf(
@@ -883,6 +903,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                         {p.side === 'call' ? 'Y' : 'N'}
                       </span>
                       {legName(p)}
+                      {p.role === 'outside' && <OutsideTag />}
                       {p.role === 'adopted' && (
                         <span className="ml-1.5">
                           <InfoDot side="right" text={ADOPTED_NOTE} />
