@@ -185,14 +185,20 @@ def notify_system(title: str, detail: str = "", level: str = RED) -> None:
     s.submit(dest, text, "sys|%s" % title)
 
 
-def notify_resolved(title: str, detail: str = "") -> None:
-    """The all-clear after a system fault. Never de-duplicated: a recovery is
-    news every time, and missing one would leave an outage looking unresolved."""
+def notify_resolved(title: str, detail: str = "", chat_id: str = "") -> None:
+    """The all-clear after a fault. Never de-duplicated: a recovery is news
+    every time, and missing one would leave an outage looking unresolved.
+
+    `chat_id` is the account's own chat, for the all-clear to an account
+    alert - it goes where the alert went, the admin group and the owner."""
     s = _get()
     if not s:
         return
-    dest = ERROR_CHAT or DEFAULT_CHAT
-    s.submit(dest, "✅ <b>%s</b>\n%s\n%s" % (escape(title), escape(detail), _stamp()), None)
+    dests = [d for d in dict.fromkeys([ERROR_CHAT, chat_id]) if d] or (
+        [DEFAULT_CHAT] if DEFAULT_CHAT else [])
+    text = "✅ <b>%s</b>\n%s\n%s" % (escape(title), escape(detail), _stamp())
+    for dest in dests:
+        s.submit(dest, text, None)
 
 
 def notify_trade(account: str, title: str, detail: str = "",

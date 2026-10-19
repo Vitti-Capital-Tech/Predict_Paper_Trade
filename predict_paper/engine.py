@@ -179,6 +179,9 @@ class Engine:
         self._reconcile_at: float = 0.0
         self._adopted_live: set = set()
         self._reconcile_fails: Dict[int, int] = {}
+        # When each account's current run of failed reconciles began, so the
+        # all-clear can say how long Delta was out of reach.
+        self._reconcile_fail_since: Dict[int, float] = {}
         # (account, symbol) -> why an exit was wanted, kept while its sell is
         # unanswered so the record carries the real reason once Delta answers.
         self._exit_reasons: Dict[tuple, str] = {}
@@ -1420,6 +1423,7 @@ class Engine:
                 # what Delta holds, and that is worth a person's attention.
                 n = self._reconcile_fails.get(aid, 0) + 1
                 self._reconcile_fails[aid] = n
+                self._reconcile_fail_since.setdefault(aid, now_ts)
                 # The dashboard's health bar. Not on the first miss - those are
                 # routine and gone a minute later.
                 if n >= 3:
@@ -1431,6 +1435,10 @@ class Engine:
                         "Reconcile with Delta FAILED 5 times in a row - "
                         "positions may be out of sync", str(exc), chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""))
                 continue
+            # A run long enough to have raised the alert gets an all-clear
+            # once this pass is done, so the alert is not left looking open.
+            failed_for = self._reconcile_fails.get(aid, 0)
+            fail_since = self._reconcile_fail_since.pop(aid, now_ts)
             self._reconcile_fails[aid] = 0
             # Disagreements still standing after this pass, for the dashboard.
             # Adoptions and size corrections are not among them: by the end of
@@ -1597,6 +1605,17 @@ class Engine:
                     "closing it; check Delta" % sym, chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""))
 
             self.store.set_delta_status(aid, "; ".join(issues) or None)
+
+            if failed_for >= 5:
+                name = self.accounts[aid].name if aid in self.accounts else str(aid)
+                telegram.notify_resolved(
+                    "DELTA GLOBAL - reconnected (%s)" % name,
+                    "Reconcile with Delta works again after %d failed checks "
+                    "(about %.0f min). %s" % (
+                        failed_for, max(1.0, (now_ts - fail_since) / 60.0),
+                        ("Still different: " + "; ".join(issues)) if issues
+                        else "Positions match Delta - nothing to do."),
+                    chat_id=(getattr(self.accounts.get(aid), "chat_id", "") or ""))
 
     # ---- dashboard feed -------------------------------------------------
     def _leg_payload(self, leg: Optional[Contract], max_price: float) -> Optional[Dict]:
