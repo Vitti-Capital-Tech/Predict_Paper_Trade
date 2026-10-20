@@ -8,6 +8,7 @@ import {
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
 import { parseRoute, formatRoute, writeRoute, onRouteChange } from '../lib/route'
 import CandleChart from './CandleChart'
+import OrderBook from './OrderBook'
 import Dropdown from './Dropdown'
 import RulesModal from './RulesModal'
 import { HourglassIcon, ClockIcon, PauseIcon, InfoIcon } from './icons'
@@ -604,6 +605,9 @@ export default function TradePanel({ atrInfo, account, workerLive, slippage, onS
               </span>
             </div>
           </div>
+
+          <OrderBook strike={strike} yesLeg={yesLeg} noLeg={noLeg}
+                     yesBook={yesBook} noBook={noBook} now={now} />
         </div>
 
         {/* Trade ticket. Paper only: it fills against a simulated book, so on
