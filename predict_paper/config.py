@@ -163,8 +163,8 @@ class FillConfig:
     extra_slippage_ticks: float = 0.0
     tick_size: float = 0.0001
     max_book_levels: int = 20
-    # Real depth behind each displayed level. Delta fills far more at the
-    # touch than its public L2 book shows; 1.0 trusts the book as published.
+    # Real depth behind each displayed level; 1.0 trusts the book as
+    # published, which JD's own Delta fills confirm (see fills.py).
     depth_multiplier: float = 1.0
     allow_partial: bool = False
     # Refetch the book at execution time so real latency is in the fill.

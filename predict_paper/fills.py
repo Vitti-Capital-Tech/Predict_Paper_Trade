@@ -5,13 +5,13 @@ exactly where the book is thinnest - e.g. a put quoted bid 0.001 / ask 0.049 -
 so filling at mid or at mark would manufacture edge that does not exist.
 Default model walks the real L2 book level by level.
 
-The public book understates what the venue fills. Matched against live Delta
-fills (1,410 paired legs, Oct 2026), a 250-300 contract IOC averaged at the
-displayed touch - while walking the published ladder (30, 34, 39 ... contracts
-a level) priced the same order ~0.005 worse, about $100 of the gap between JD
-and its paper twin. Live's cost does still grow with size, along a ladder of
-the same shape, so the sizes are scaled rather than the walk dropped: see
-`depth_multiplier`.
+The published book is the real one. JD's own Delta fills (402 buy orders,
+13-19 Oct) matched levels of 29, 33, 38, 44, 51 ... contracts at 0.001 steps -
+the public ladder of 30, 34, 39, 45, 51 to within a contract. Paper used to buy
+~0.005 dearer than live for a different reason: each account fetched its own
+book at a different moment of the cycle, and live's order met a top ~0.004
+lower than paper's snapshot. The engine now fetches one book per symbol per
+poll and both sides use it. `depth_multiplier` stays as a knob, at 1.0.
 """
 from __future__ import annotations
 
