@@ -4,6 +4,14 @@ The whole credibility of a paper run on these markets rests here. The wings are
 exactly where the book is thinnest - e.g. a put quoted bid 0.001 / ask 0.049 -
 so filling at mid or at mark would manufacture edge that does not exist.
 Default model walks the real L2 book level by level.
+
+The public book understates what the venue fills. Matched against live Delta
+fills (1,410 paired legs, Oct 2026), a 250-300 contract IOC averaged at the
+displayed touch - while walking the published ladder (30, 34, 39 ... contracts
+a level) priced the same order ~0.005 worse, about $100 of the gap between JD
+and its paper twin. Live's cost does still grow with size, along a ladder of
+the same shape, so the sizes are scaled rather than the walk dropped: see
+`depth_multiplier`.
 """
 from __future__ import annotations
 
@@ -32,12 +40,13 @@ class Fill:
         return self.qty * self.avg_price
 
 
-def _levels(book: Dict[str, Any], key: str, limit: int) -> List[Tuple[float, float]]:
+def _levels(book: Dict[str, Any], key: str, limit: int,
+            depth: float = 1.0) -> List[Tuple[float, float]]:
     out: List[Tuple[float, float]] = []
     for lvl in (book.get(key) or [])[:limit]:
         try:
             price = float(lvl["price"])
-            size = float(lvl["size"])
+            size = float(lvl["size"]) * depth
         except (KeyError, TypeError, ValueError):
             continue
         if size > 0:
@@ -46,10 +55,14 @@ def _levels(book: Dict[str, Any], key: str, limit: int) -> List[Tuple[float, flo
 
 
 def walk_book(book: Dict[str, Any], side: str, qty: float, max_levels: int = 20,
-              allow_partial: bool = False) -> Fill:
-    """side='buy' consumes asks (book['sell']); side='sell' consumes bids."""
+              allow_partial: bool = False, depth: float = 1.0) -> Fill:
+    """side='buy' consumes asks (book['sell']); side='sell' consumes bids.
+
+    `depth` scales every displayed size - the real book behind the published
+    one, as measured against live fills.
+    """
     key = "sell" if side == "buy" else "buy"
-    levels = _levels(book, key, max_levels)
+    levels = _levels(book, key, max_levels, depth)
     if not levels:
         return Fill(False, 0.0, 0.0, f"no {key} liquidity", requested_qty=qty)
 
@@ -80,7 +93,8 @@ def walk_book(book: Dict[str, Any], side: str, qty: float, max_levels: int = 20,
 
 
 def qty_within_price(book: Dict[str, Any], side: str, qty: float,
-                     ceiling: float, max_levels: int = 20) -> float:
+                     ceiling: float, max_levels: int = 20,
+                     depth: float = 1.0) -> float:
     """The largest slice of `qty` whose average fill stays within `ceiling`.
 
     Buying more of a thin leg always costs more per contract, because each
@@ -94,7 +108,7 @@ def qty_within_price(book: Dict[str, Any], side: str, qty: float,
     if qty <= 0:
         return 0.0
     key = "sell" if side == "buy" else "buy"
-    levels = _levels(book, key, max_levels)
+    levels = _levels(book, key, max_levels, depth)
     if not levels:
         return 0.0
     levels.sort(key=lambda x: x[0], reverse=(side == "sell"))
@@ -126,7 +140,8 @@ def qty_within_price(book: Dict[str, Any], side: str, qty: float,
 
 
 def qty_within_spend(book: Dict[str, Any], side: str, qty: float,
-                     budget: float, max_levels: int = 20) -> float:
+                     budget: float, max_levels: int = 20,
+                     depth: float = 1.0) -> float:
     """The largest slice of `qty` that costs no more than `budget` to buy.
 
     A dollar budget is converted to contracts at the quoted price, but the
@@ -139,7 +154,7 @@ def qty_within_spend(book: Dict[str, Any], side: str, qty: float,
     if qty <= 0 or budget <= 0:
         return 0.0
     key = "sell" if side == "buy" else "buy"
-    levels = _levels(book, key, max_levels)
+    levels = _levels(book, key, max_levels, depth)
     if not levels:
         return 0.0
     levels.sort(key=lambda x: x[0])
@@ -215,10 +230,12 @@ class FillEngine:
             pad = self.cfg.extra_slippage_ticks * self.cfg.tick_size
             limit = (ceiling - pad) if side == "buy" else (ceiling + pad)
             qty = min(qty, qty_within_price(book, side, qty, limit,
-                                            self.cfg.max_book_levels))
+                                            self.cfg.max_book_levels,
+                                            self.cfg.depth_multiplier))
         if budget is not None and side == "buy":
             qty = min(qty, qty_within_spend(book, side, qty, budget,
-                                            self.cfg.max_book_levels))
+                                            self.cfg.max_book_levels,
+                                            self.cfg.depth_multiplier))
         return max(0.0, qty)
 
     def simulate(self, side: str, qty: float, book: Optional[Dict[str, Any]],
@@ -229,7 +246,7 @@ class FillEngine:
             if not book:
                 return Fill(False, 0.0, 0.0, "no orderbook", requested_qty=qty)
             fill = walk_book(book, side, qty, self.cfg.max_book_levels,
-                             self.cfg.allow_partial)
+                             self.cfg.allow_partial, self.cfg.depth_multiplier)
             if not fill.filled:
                 return fill
             fill.avg_price = self._apply_extra(fill.avg_price, side)

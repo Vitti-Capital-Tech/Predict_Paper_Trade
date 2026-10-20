@@ -801,6 +801,31 @@ class Engine:
                 if cfg.entry.require_both_wings:
                     return
                 continue
+            # The order limit: the odds ceiling, tightened to the slippage
+            # tolerance around the quote. Live sends it as the IOC price.
+            order_limit = leg.max_price
+            if cfg.entry.max_slippage is not None and leg.quoted_price is not None:
+                order_limit = min(order_limit,
+                                  leg.quoted_price + cfg.entry.max_slippage)
+            # Sized against the limit, not the quote. The size came from
+            # the quoted price, but the order may fill anywhere up to the
+            # limit - and did: 10 contracts sized at the quote filled at
+            # 0.112 and spent $1.12 of a $1 budget. Delta cannot fill above
+            # the limit, so qty x limit <= budget makes overspending
+            # impossible rather than merely unlikely.
+            #
+            # Paper sizes the same way so a twin holds the contracts its live
+            # account does: sized at the quote it bought 2-11% more.
+            leg_budget = short_by(leg.contract.symbol) if partial else target
+            if order_limit and order_limit > 0:
+                qty = min(int(qty), int(leg_budget / order_limit))
+            if qty < 1:
+                log.info("SKIP   %-18s %s: budget %.2f buys nothing at "
+                         "limit %.4f", rnd.round_id, leg.role,
+                         leg_budget, order_limit)
+                if cfg.entry.require_both_wings:
+                    return
+                continue
             if acct.live:
                 # The decision is identical; only the fill differs. The limit
                 # is the price the odds rule already approved, so the exchange
@@ -826,28 +851,8 @@ class Engine:
                         log.info("SKIP   %-18s %s", rnd.round_id, msg)
                         self._log_skip(round_id=rnd.round_id, reasons=[msg])
                         continue
-                ceiling_live = leg.max_price
-                if cfg.entry.max_slippage is not None and leg.quoted_price is not None:
-                    ceiling_live = min(ceiling_live,
-                                       leg.quoted_price + cfg.entry.max_slippage)
-                # Sized against the limit, not the quote. The size came from
-                # the quoted price, but the order may fill anywhere up to the
-                # limit - and did: 10 contracts sized at the quote filled at
-                # 0.112 and spent $1.12 of a $1 budget. Delta cannot fill above
-                # the limit, so qty x limit <= budget makes overspending
-                # impossible rather than merely unlikely.
-                budget_live = short_by(leg.contract.symbol) if partial else target
-                if ceiling_live and ceiling_live > 0:
-                    qty = min(int(qty), int(budget_live / ceiling_live))
-                if qty < 1:
-                    log.info("SKIP   %-18s %s: budget %.2f buys nothing at "
-                             "limit %.4f", rnd.round_id, leg.role,
-                             budget_live, ceiling_live)
-                    if cfg.entry.require_both_wings:
-                        return
-                    continue
                 fill = acct.executor.buy(
-                    leg.contract.symbol, int(qty), ceiling_live,
+                    leg.contract.symbol, int(qty), order_limit,
                     rnd.round_id, leg.role)
                 if fill.unconfirmed:
                     # The order may be on the exchange. Treated as held so

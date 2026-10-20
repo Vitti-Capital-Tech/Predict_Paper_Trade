@@ -88,6 +88,7 @@ fills:
   extra_slippage_ticks: 0.0 # adverse padding beyond visible depth
   tick_size: 0.0001
   max_book_levels: 20
+  depth_multiplier: 10      # displayed L2 sizes x this; calibrated on live Delta fills
   allow_partial: false      # false = reject rather than silently under-fill
   refetch_book_on_execute: true
   max_spread_frac: 1.5      # skip a leg whose spread exceeds 150% of mid
