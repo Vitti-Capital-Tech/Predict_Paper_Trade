@@ -811,6 +811,21 @@ class Engine:
                     log.warning("SKIP   %-18s %s: live account has no credentials",
                                 rnd.round_id, leg.role)
                     return
+                # Paper drops an orphan middle after the fills, below; live
+                # cannot, because by then the order is on the exchange. So the
+                # same rule is applied here, before the middle is sent: the
+                # wings come first in `legs`, and one that failed this tick
+                # leaves the middle unsent rather than bought on its own.
+                if leg.role == "middle":
+                    missing = drop_orphan_middle(
+                        [l.role for l, _ in planned] + ["middle"], held,
+                        cfg.entry.middle_needs_both_wings)
+                    if missing:
+                        msg = ("middle not sent: needs both wings, %s did not fill"
+                               % " and ".join(missing))
+                        log.info("SKIP   %-18s %s", rnd.round_id, msg)
+                        self._log_skip(round_id=rnd.round_id, reasons=[msg])
+                        continue
                 ceiling_live = leg.max_price
                 if cfg.entry.max_slippage is not None and leg.quoted_price is not None:
                     ceiling_live = min(ceiling_live,
