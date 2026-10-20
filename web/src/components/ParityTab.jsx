@@ -18,6 +18,10 @@ import Dropdown from './Dropdown'
  *
  * Only the overlap counts: rounds from when both accounts had started trading.
  * Before that one side simply did not exist, which is not disagreement.
+ *
+ * The start can be moved later with the "From" chips. It opens on the fill
+ * fix: trades before it were filled by an older paper model whose gap to live
+ * is already explained, and leaving them in hides whether the fix worked.
  */
 
 // Settings that are allowed to differ, or mean different things per side.
@@ -49,6 +53,29 @@ const roundTime = (rid) => {
 }
 const when = (d) => (d ? d.toLocaleString('en-US', { timeZone: IST, day: 'numeric',
   month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }) : '—')
+const IST_MS = 330 * 60 * 1000
+
+// When the worker began quoting and filling paper from the order book the way
+// live is filled (commits ec31096, 5ae14b2). Rounds before it are not a fair
+// test of paper against live.
+const FILL_FIX = new Date('2026-10-20T11:04:44Z')
+
+// 'YYYY-MM-DDTHH:MM' read as IST, and back - the dashboard's clock is IST.
+const fromIstInput = (s) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(s || '')
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - IST_MS : null
+}
+const toIstInput = (d) => new Date(d.getTime() + IST_MS).toISOString().slice(0, 16)
+const istMidnight = (now) => {
+  const t = new Date(now + IST_MS)
+  return Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()) - IST_MS
+}
+
+const PERIODS = [['all', 'All'], ['fix', 'Since fill fix'], ['today', 'Today'],
+  ['week', '7 days'], ['custom', 'Custom']]
+const chip = (on) => `rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+  on ? 'bg-white/10 text-slate-100' : 'text-slate-500 hover:text-slate-300'}`
+
 const legText = (p) => `${p.side === 'call' ? 'Y' : 'N'} ${Number(p.strike).toLocaleString('en-US')}`
 
 function summarise(legs) {
@@ -83,6 +110,18 @@ export default function ParityTab({ accounts, refreshKey = 0 }) {
   const [legs, setLegs] = useState(null)        // { live: [], paper: [] }
   const [error, setError] = useState(null)
   const [limit, setLimit] = useState(50)
+  const [period, setPeriod] = useState('fix')
+  const [custom, setCustom] = useState(() => toIstInput(FILL_FIX))
+
+  // The earliest entry the chosen period allows; the overlap rule still applies.
+  const from = useMemo(() => {
+    const now = Date.now()
+    if (period === 'fix') return FILL_FIX.getTime()
+    if (period === 'today') return istMidnight(now)
+    if (period === 'week') return now - 7 * 24 * 3600 * 1000
+    if (period === 'custom') return fromIstInput(custom) ?? -Infinity
+    return -Infinity
+  }, [period, custom])
 
   // Every config once, so the default pair can be the closest settings match.
   useEffect(() => {
@@ -138,8 +177,9 @@ export default function ParityTab({ accounts, refreshKey = 0 }) {
       const t = new Date(p.entry_time).getTime()
       return Number.isFinite(t) && t < m ? t : m
     }, Infinity)
-    const since = Math.max(first(legs.live), first(legs.paper))
-    if (!Number.isFinite(since)) return { since: null, rounds: [], live: summarise([]), paper: summarise([]) }
+    const both = Math.max(first(legs.live), first(legs.paper))
+    if (!Number.isFinite(both)) return { since: null, rounds: [], live: summarise([]), paper: summarise([]) }
+    const since = Math.max(both, from)
     const inWindow = (p) => new Date(p.entry_time).getTime() >= since
     const L = legs.live.filter(inWindow)
     const P = legs.paper.filter(inWindow)
@@ -171,6 +211,7 @@ export default function ParityTab({ accounts, refreshKey = 0 }) {
     const agreed = rounds.filter((r) => r.status === 'same').length
     return {
       since: new Date(since),
+      sinceBoth: since === both,
       rounds,
       live: summarise(L),
       paper: summarise(P),
@@ -178,7 +219,7 @@ export default function ParityTab({ accounts, refreshKey = 0 }) {
       gap: gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : null,
       gapCount: gaps.length,
     }
-  }, [legs])
+  }, [legs, from])
 
   if (!live.length || !paper.length) {
     return <p className="py-10 text-center text-sm text-slate-600">
@@ -202,9 +243,27 @@ export default function ParityTab({ accounts, refreshKey = 0 }) {
           value={paperId} onChange={setPaperId}
           options={paper.map((a) => ({ value: a.id, label: a.name }))}
         />
+      </div>
+
+      {/* Period */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-slate-400">
+        <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Compare from">
+          <span className="mr-1 text-slate-500">From</span>
+          {PERIODS.map(([k, name]) => (
+            <button key={k} onClick={() => setPeriod(k)} className={chip(period === k)}
+                    aria-pressed={period === k}>{name}</button>
+          ))}
+        </div>
+        {period === 'custom' && (
+          <label className="flex items-center gap-1.5 text-[11px] text-slate-500">
+            <input type="datetime-local" value={custom} onChange={(e) => setCustom(e.target.value)}
+                   className="nums rounded-md border border-white/10 bg-ink-950 px-2 py-1 text-[11px] text-slate-200 [color-scheme:dark]" />
+            IST
+          </label>
+        )}
         {view?.since && (
-          <span className="ml-auto text-[11px] text-slate-500">
-            Comparing from {when(view.since)} IST, when both were trading
+          <span className="text-[11px] text-slate-500 sm:ml-auto">
+            Comparing from {when(view.since)} IST{view.sinceBoth ? ', when both were trading' : ''}
           </span>
         )}
       </div>
@@ -239,7 +298,13 @@ export default function ParityTab({ accounts, refreshKey = 0 }) {
         </p>
       )}
 
-      {view?.since && (
+      {view?.since && !view.rounds.length && (
+        <p className="py-6 text-center text-sm text-slate-600">
+          No trades on either account in this period yet.
+        </p>
+      )}
+
+      {view?.since && view.rounds.length > 0 && (
         <>
           {/* Headline numbers */}
           <div className="grid gap-3 sm:grid-cols-2">
