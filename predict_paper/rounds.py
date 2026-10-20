@@ -45,6 +45,19 @@ def _f(value: Any) -> Optional[float]:
     return out
 
 
+def _top_level(book: Optional[Dict[str, Any]], key: str):
+    """(price, size) of the best level on one side of an L2 book: the highest
+    bid (`key="buy"`) or the lowest ask (`key="sell"`). (None, None) if empty."""
+    best = None
+    for lvl in (book or {}).get(key) or []:
+        price, size = _f(lvl.get("price")), _f(lvl.get("size"))
+        if not price or price <= 0 or not size or size <= 0:
+            continue
+        if best is None or (price > best[0] if key == "buy" else price < best[0]):
+            best = (price, size)
+    return best or (None, None)
+
+
 @dataclass
 class Contract:
     symbol: str
@@ -72,6 +85,18 @@ class Contract:
         if self.best_bid is None or self.best_ask is None:
             return None
         return self.best_ask - self.best_bid
+
+    def apply_book(self, book: Optional[Dict[str, Any]]) -> None:
+        """Quote from the L2 order book instead of the ticker.
+
+        The ticker lags the book by about a second and a half, and at an exit
+        that was worth 0.05-0.09 of price: live's exit floor was set from a
+        bid that was already gone. Bid, ask and the size resting at each are
+        all taken from the book's top level. No book means no quote - a
+        decision is not made on the stale number instead.
+        """
+        self.best_bid, self.bid_size = _top_level(book, "buy")
+        self.best_ask, self.ask_size = _top_level(book, "sell")
 
     @classmethod
     def from_ticker(cls, t: Dict[str, Any]) -> Optional["Contract"]:

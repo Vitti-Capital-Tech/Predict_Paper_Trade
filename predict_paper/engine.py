@@ -202,6 +202,10 @@ class Engine:
         # Last spot seen per symbol, so a settled position can report the
         # underlying price that produced its outcome.
         self._last_spot: Dict[str, float] = {}
+        # L2 books fetched this poll, by symbol (None where the fetch failed).
+        # Every account, every quote and every fill in one poll reads the same
+        # book, so a live account and its paper twin decide on one picture.
+        self._poll_books: Dict[str, Optional[Dict]] = {}
         self._halt_logged: set = set()
         self._config_at: float = 0.0
         # account_id -> AccountStrategy. Empty until the first refresh,
@@ -399,11 +403,26 @@ class Engine:
     def _book(self, symbol: str):
         if self.cfg.fills.model != "orderbook":
             return None
-        try:
-            return self.client.orderbook(symbol)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("orderbook fetch failed for %s: %s", symbol, exc)
-            return None
+        return self._quote_book(symbol)
+
+    def _quote_book(self, symbol: str):
+        """The L2 book for `symbol`, fetched at most once per poll."""
+        if symbol not in self._poll_books:
+            try:
+                self._poll_books[symbol] = self.client.orderbook(symbol)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("orderbook fetch failed for %s: %s", symbol, exc)
+                self._poll_books[symbol] = None
+        return self._poll_books[symbol]
+
+    def _quote_from_book(self, contract: Contract) -> None:
+        """Replace the ticker's bid/ask and sizes with the order book's.
+
+        Only for contracts about to be decided on - a round some account may
+        enter, a position whose exit is being priced - since a book is one
+        request per symbol and the ticker is one request for everything.
+        """
+        contract.apply_book(self._quote_book(contract.symbol))
 
     # ---- settlement -----------------------------------------------------
     def settle_expired(self, live_symbols: set, now: datetime) -> None:
@@ -512,6 +531,11 @@ class Engine:
             # existed - falls back to config.yaml.
             cfg = self._cfg_for(pos)
 
+            # A price exit is decided on the bid, so it needs the book's now;
+            # the others only need it once they fire, to price the sale.
+            if cfg.exit.mode == "price":
+                self._quote_from_book(contract)
+
             spot = contract.spot_price
             should, reason = self._strategy_for(pos).should_exit(pos, contract, spot)
 
@@ -529,6 +553,9 @@ class Engine:
 
             if not should:
                 continue
+
+            # The sale is priced off the book: live's floor, paper's fill.
+            self._quote_from_book(contract)
 
             owner = self.accounts.get(pos.account_id)
             live = owner is not None and getattr(owner, "live", False)
@@ -672,6 +699,13 @@ class Engine:
             return
 
         held_syms = {s for (a, s) in self._held_symbols if a == aid}
+        # Price the round from the order book, not the ticker: the odds test,
+        # the size, live's limit and paper's fill all read the same top of
+        # book. Only once the cheap gates pass, so a round nobody can trade
+        # costs no requests.
+        if atr_ok and rnd.complete and acct.strategy.timing_ok(rnd, now)[0]:
+            for c in rnd.contracts:
+                self._quote_from_book(c)
         decision = acct.strategy.evaluate(rnd, now, atr_ok, atr, held=held,
                                           held_symbols=held_syms)
         if not decision.enter:
@@ -1219,6 +1253,7 @@ class Engine:
         self.reconcile_live_positions(now_ts)
         self.maybe_adopt(now_ts)
 
+        self._poll_books = {}
         tickers = self.client.binary_tickers()
         products = self._refresh_products(now_ts)
         # One round set per underlying any account trades, not one for the
