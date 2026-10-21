@@ -3,7 +3,7 @@ import {
   fetchBinaryTickers, fetchBinaryProducts, fetchCandles, fetchSpotTicker,
   buildRounds, legFor, sizeOrder, spotSymbolFor,
   RESOLUTIONS, lookbackHoursFor, barResolutionFor, indexSymbolFor,
-  mergeLiveBar, fetchOrderbook, previewOrder, topOfBook, fetchDailyRange,
+  mergeLiveBar, fetchOrderbook, fetchTrades, previewOrder, topOfBook, fetchDailyRange,
 } from '../lib/delta'
 import { placeManualOrder, fetchManualOrders, isConfigured } from '../lib/supabase'
 import { parseRoute, formatRoute, writeRoute, onRouteChange } from '../lib/route'
@@ -84,6 +84,7 @@ export default function TradePanel({ atrInfo, account, workerLive, slippage, onS
   const [now, setNow] = useState(Date.now())
   const [placing, setPlacing] = useState(null)
   const [books, setBooks] = useState({})
+  const [trades, setTrades] = useState({})
   const [orders, setOrders] = useState([])
   const [ordersOffline, setOrdersOffline] = useState(false)
   const [toast, setToast] = useState(null)
@@ -271,8 +272,9 @@ export default function TradePanel({ atrInfo, account, workerLive, slippage, onS
   const yesLeg = round && strike !== null ? legFor(round, strike, 'call') : null
   const noLeg = round && strike !== null ? legFor(round, strike, 'put') : null
 
-  // Depth for the two legs on screen. Only the selected strike is polled, so
-  // this is two requests a tick rather than one per contract in the round.
+  // Depth and recent trades for the two legs on screen. Only the selected
+  // strike is polled, so this is four requests a tick rather than two per
+  // contract in the round.
   const yesSymbol = yesLeg?.symbol ?? null
   const noSymbol = noLeg?.symbol ?? null
   useEffect(() => {
@@ -283,6 +285,9 @@ export default function TradePanel({ atrInfo, account, workerLive, slippage, onS
         if (!sym) continue
         fetchOrderbook(sym)
           .then((b) => alive && setBooks((prev) => ({ ...prev, [sym]: b })))
+          .catch(() => {})
+        fetchTrades(sym)
+          .then((t) => alive && setTrades((prev) => ({ ...prev, [sym]: t })))
           .catch(() => {})
       }
     }
@@ -607,7 +612,8 @@ export default function TradePanel({ atrInfo, account, workerLive, slippage, onS
           </div>
 
           <OrderBook strike={strike} yesLeg={yesLeg} noLeg={noLeg}
-                     yesBook={yesBook} noBook={noBook} now={now} />
+                     yesBook={yesBook} noBook={noBook} now={now}
+                     yesTrades={trades[yesLeg?.symbol]} noTrades={trades[noLeg?.symbol]} />
         </div>
 
         {/* Trade ticket. Paper only: it fills against a simulated book, so on

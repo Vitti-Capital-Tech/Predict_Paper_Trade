@@ -323,6 +323,26 @@ export function fetchOrderbook(symbol) {
 }
 
 /**
+ * Recent public trades on one contract, newest first. The ticker carries no
+ * last price for binaries, so this is the only place a last trade comes from.
+ * `side` is the taker's: 'buy' when someone lifted the ask, 'sell' when
+ * someone hit the bid.
+ */
+export async function fetchTrades(symbol) {
+  const res = await get(`/v2/trades/${symbol}`)
+  const rows = Array.isArray(res) ? res : (res?.trades ?? [])
+  return rows
+    .map((t) => ({
+      time: Number(t.timestamp) / 1000,
+      price: Number(t.price),
+      size: Number(t.size),
+      side: t.buyer_role === 'taker' ? 'buy' : 'sell',
+    }))
+    .filter((t) => Number.isFinite(t.price) && t.size > 0)
+    .sort((a, b) => b.time - a.time)
+}
+
+/**
  * Best price from the book — and the one to trust.
  *
  * `/v2/tickers` lags `/v2/l2orderbook` by roughly 1.5-4.5 seconds. Measured

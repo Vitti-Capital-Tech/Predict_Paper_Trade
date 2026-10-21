@@ -11,6 +11,10 @@ function px(p) {
 
 const qty = (v) => Math.round(Number(v)).toLocaleString('en-US')
 
+const TRADES_SHOWN = 10
+const clock = (ms) => new Date(ms).toLocaleTimeString('en-GB', {
+  timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
 // Best level first, with the running total from the touch outwards: "Total"
 // is how many contracts you could take before the price moves past that row.
 function side(levels, key, n) {
@@ -23,17 +27,46 @@ function side(levels, key, n) {
   return rows.map((r) => ({ ...r, total: (total += r.size) }))
 }
 
-function Ladder({ label, tone, leg, book, depth, now }) {
+// Newest first. Green when the taker bought (lifted the ask), red when the
+// taker sold (hit the bid) - the side that moved the price.
+function Trades({ trades }) {
+  return (
+    <div className="mt-2 border-t border-white/5 pt-1.5">
+      <div className="grid grid-cols-3 px-2 pb-1 text-[10px] uppercase tracking-wider text-slate-600">
+        <span>Recent trades</span>
+        <span className="text-right">Price</span>
+        <span className="text-right">Qty</span>
+      </div>
+      {!trades ? (
+        <p className="px-2 py-2 text-center text-slate-600">Loading trades…</p>
+      ) : !trades.length ? (
+        <p className="px-2 py-2 text-center text-slate-600">No trades yet</p>
+      ) : trades.slice(0, TRADES_SHOWN).map((t, i) => (
+        <div key={`${t.time}-${i}`} className="grid grid-cols-3 px-2 py-[3px]">
+          <span className="text-slate-500">{clock(t.time)}</span>
+          <span className={`text-right ${t.side === 'buy' ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {px(t.price)}
+          </span>
+          <span className="text-right text-slate-300">{qty(t.size)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function Ladder({ label, tone, leg, book, depth, now, trades }) {
   const asks = side(book?.sell, 'sell', depth)
   const bids = side(book?.buy, 'buy', depth)
   // One scale for both halves, so a deep bid side reads as deeper than a thin
   // ask side rather than each filling its own width.
   const max = Math.max(asks.at(-1)?.total ?? 0, bids.at(-1)?.total ?? 0, 1)
   const spread = asks.length && bids.length ? asks[0].price - bids[0].price : null
-  // last_updated_at is in microseconds. The poll is every 2s; a book older
-  // than that by a wide margin is the venue gone quiet, not the dashboard.
+  // last_updated_at (microseconds) is when Delta last changed the book, not
+  // when it was fetched - that is every 2s. A contract pinned at the price
+  // limits (1.000 / 0.969, 0.031 / 0.001) can sit unchanged for minutes.
   const ageSec = book?.last_updated_at ? (now - book.last_updated_at / 1000) / 1000 : null
   const stale = ageSec !== null && ageSec > 15
+  const last = trades?.[0]
 
   const row = (r, kind) => (
     <div key={`${kind}${r.price}`} className="relative grid grid-cols-3 px-2 py-[3px]">
@@ -58,8 +91,8 @@ function Ladder({ label, tone, leg, book, depth, now }) {
         </span>
         {stale && (
           <span className="nums text-[10px] text-amber-400"
-                title="Delta has not changed this book recently">
-            book {Math.round(ageSec)}s old
+                title="Delta's quotes on this contract have not moved for this long. The book itself is fetched every 2s.">
+            unchanged {Math.round(ageSec)}s
           </span>
         )}
       </div>
@@ -82,24 +115,28 @@ function Ladder({ label, tone, leg, book, depth, now }) {
               : <p className="px-2 py-1 text-slate-600">No asks</p>}
             <div className="my-0.5 border-y border-white/5 px-2 py-0.5 text-center text-[10px] text-slate-500">
               {spread !== null ? `spread ${px(spread)}` : '—'}
+              {last && <> · last <span className={last.side === 'buy' ? 'text-emerald-400' : 'text-rose-400'}>
+                {px(last.price)}</span></>}
             </div>
             {bids.length
               ? bids.map((r) => row(r, 'bid'))
               : <p className="px-2 py-1 text-slate-600">No bids</p>}
           </>
         )}
+        {leg && <Trades trades={trades} />}
       </div>
     </div>
   )
 }
 
 /**
- * Bid/ask ladder for the YES and NO legs of the selected strike. Draws the
- * books TradePanel already polls for its price preview, so it costs no extra
- * requests and reads the same on live and paper accounts - the book is
+ * Bid/ask ladder for the YES and NO legs of the selected strike, each with its
+ * recent trades underneath. Draws the books TradePanel already polls for its
+ * price preview, and reads the same on live and paper accounts - the book is
  * Delta's either way; only where a paper fill lands is simulated.
  */
-export default function OrderBook({ strike, yesLeg, noLeg, yesBook, noBook, now }) {
+export default function OrderBook({ strike, yesLeg, noLeg, yesBook, noBook, now,
+                                    yesTrades, noTrades }) {
   const [depth, setDepth] = useState(DEPTHS[0])
   const at = strike !== null && strike !== undefined ? strike.toLocaleString('en-US') : '—'
 
@@ -124,9 +161,9 @@ export default function OrderBook({ strike, yesLeg, noLeg, yesBook, noBook, now 
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Ladder label={`YES · Above ${at}`} tone="text-emerald-400"
-                leg={yesLeg} book={yesBook} depth={depth} now={now} />
+                leg={yesLeg} book={yesBook} depth={depth} now={now} trades={yesTrades} />
         <Ladder label={`NO · Below ${at}`} tone="text-rose-400"
-                leg={noLeg} book={noBook} depth={depth} now={now} />
+                leg={noLeg} book={noBook} depth={depth} now={now} trades={noTrades} />
       </div>
     </div>
   )
