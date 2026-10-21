@@ -168,8 +168,10 @@ function Book({ label, tone, leg, book, trades, now }) {
           </>
         )}
 
-        {/* Recent trades: price and the way it went, size, time / taker side. */}
-        {leg && (
+        {/* Recent trades: price and the way it went, size, time / taker side.
+            Left out entirely until the contract has traded - most strikes
+            never do, and an empty table only read as broken. */}
+        {leg && trades?.length > 0 && (
           <div className="border-t border-white/10">
             <p className="px-3 pb-1 pt-2.5 text-[13px] text-slate-200">Recent Trades</p>
             <div className="grid grid-cols-[1fr_1fr_1.3fr] px-3 pb-1 text-[11px] text-slate-500">
@@ -178,11 +180,7 @@ function Book({ label, tone, leg, book, trades, now }) {
               <span className="text-right">Time/Taker</span>
             </div>
             <div className="max-h-[180px] overflow-y-auto pb-1.5">
-              {!trades ? (
-                <p className="px-3 py-3 text-center text-slate-600">Loading trades…</p>
-              ) : !trades.length ? (
-                <p className="px-3 py-3 text-center text-slate-600">No trades yet</p>
-              ) : trades.slice(0, TRADES_SHOWN).map((t, i) => (
+              {trades.slice(0, TRADES_SHOWN).map((t, i) => (
                 <div key={`${t.time}-${i}`} className="grid grid-cols-[1fr_1fr_1.3fr] px-3 py-[3px]">
                   <span className={t.side === 'buy' ? 'text-emerald-400' : 'text-rose-400'}>
                     {px(t.price)} {t.side === 'buy' ? '↗' : '↙'}
