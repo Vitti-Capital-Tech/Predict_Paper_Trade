@@ -410,13 +410,24 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
             Live tab a second green dot beside the health bar's read as two
             different alarms. The one case the switch cannot show - on, with
             no worker to act on it - is spelled out beneath the title. */}
-        <div className="flex items-center gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-100">
+        <div className="flex min-w-[11rem] flex-1 items-center gap-3">
+          {/* The account is what changes from screen to screen, so it is the
+              title; what the panel is sits above it as a label. Long names
+              are cut off and shown whole on hover. */}
+          <div className="min-w-0">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
               Automated strategy
-              {account?.name && (
-                <span className="ml-1.5 font-normal text-slate-500">
-                  · {account.name}
+            </p>
+            <h3 className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-base font-semibold text-slate-100"
+                    title={account?.name ?? ''}>
+                {account?.name ?? '—'}
+              </span>
+              {account && (
+                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                  account.mode === 'live'
+                    ? 'bg-rose-500/15 text-rose-300' : 'bg-white/5 text-slate-400'}`}>
+                  {account.mode === 'live' ? 'LIVE' : 'PAPER'}
                 </span>
               )}
             </h3>
@@ -428,7 +439,7 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           <button
             onClick={() => setOpen((v) => !v)}
             className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300
