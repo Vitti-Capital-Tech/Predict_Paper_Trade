@@ -81,12 +81,13 @@ function useLiveAtr({ underlying, resolution, period }) {
   * open/closed verdict, which belongs to the saved setting rather than to a
   * draft that is not in force yet.
   */
-function LiveAtr({ atr, state, unsaved }) {
+function LiveAtr({ atr, state, unsaved, asset }) {
   return (
     <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border
                     border-white/10 bg-ink-800/60 px-3 py-2">
       <p className="text-[11px] text-slate-500">
         {unsaved ? 'Preview' : 'ATR now'}
+        {asset && <span className="ml-1 text-slate-600">· {asset}</span>}
       </p>
 
       <p className="nums text-lg font-semibold leading-none text-slate-100">
@@ -342,8 +343,11 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
   // Above the early return: hooks must run in the same order on every render,
   // and `draft` is null until the config loads. Optional access keeps it inert
   // until there is something to read.
+  // Whose ATR gates entries: the account's own market unless it picked the
+  // other one (migration 030). Null on the row means "the asset I trade".
+  const atrAssetOf = (row) => row?.atr_asset || row?.underlying || 'BTC'
   const live = useLiveAtr({
-    underlying: draft?.underlying,
+    underlying: draft ? atrAssetOf(draft) : null,
     resolution: draft?.atr_resolution,
     period: draft?.atr_period,
   })
@@ -351,7 +355,7 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
   // Do the draft's ATR settings still match what is saved? While they do,
   // one reading serves both the preview and the header.
   const atrUnsaved = !!saved && !!draft && (
-    saved.underlying !== draft.underlying
+    atrAssetOf(saved) !== atrAssetOf(draft)
     || saved.atr_resolution !== draft.atr_resolution
     || String(saved.atr_period) !== String(draft.atr_period))
 
@@ -359,7 +363,7 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
   // the saved row. Passing nulls keeps this inert (and silent) whenever the
   // draft has not diverged.
   const liveSaved = useLiveAtr({
-    underlying: atrUnsaved ? saved.underlying : null,
+    underlying: atrUnsaved ? atrAssetOf(saved) : null,
     resolution: atrUnsaved ? saved.atr_resolution : null,
     period: atrUnsaved ? saved.atr_period : null,
   })
@@ -374,9 +378,13 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
       state: applied.state,
       resolution: (atrUnsaved ? saved?.atr_resolution : draft?.atr_resolution) ?? null,
       minimum: saved?.atr_min ?? draft?.atr_min ?? null,
+      // Named in the header only when it is not the market being traded.
+      asset: (saved?.atr_asset && saved.atr_asset !== saved.underlying)
+        ? saved.atr_asset : null,
     })
   }, [applied.atr, applied.state, atrUnsaved, saved?.atr_resolution,
-      saved?.atr_min, draft?.atr_resolution, draft?.atr_min, onAtrChange])
+      saved?.atr_min, saved?.atr_asset, saved?.underlying,
+      draft?.atr_resolution, draft?.atr_min, onAtrChange])
 
   if (!draft) {
     return (
@@ -599,7 +607,35 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
           </Section>
 
           <Section title="ATR gate">
-            <LiveAtr atr={live.atr} state={live.state} unsaved={atrUnsaved} />
+            <LiveAtr atr={live.atr} state={live.state} unsaved={atrUnsaved}
+                     asset={atrAssetOf(draft)} />
+            {/* Hidden until migration 030 adds the column: Save only sends
+                columns the row has, so a toggle here would do nothing. */}
+            {'atr_asset' in draft && (
+              // A div, not Field: Field is a <label>, and a click on its text
+              // would press the first button inside it.
+              <div>
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                  ATR from
+                  <InfoDot text="Whose volatility opens the gate. By default the asset this account trades; an ETH account can enter on BTC's ATR instead, or the other way round. Use the ETH vs BTC ATR tab to compare them." />
+                </span>
+                <div role="group" aria-label="ATR from" className="mt-1 flex rounded-lg border border-white/10 bg-ink-800 p-0.5">
+                  {['BTC', 'ETH'].map((a) => (
+                    <button
+                      key={a} type="button"
+                      onClick={() => set('atr_asset', a)}
+                      aria-pressed={atrAssetOf(draft) === a}
+                      className={`flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors ${
+                        atrAssetOf(draft) === a
+                          ? 'bg-sky-500/20 text-sky-300'
+                          : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                      {a}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <Field label="Chart" info="Which candles the ATR is measured on. 15m smooths out noise; 1m reacts faster but fires on moves too small to trade.">
               <div className="mt-1">
                 <Dropdown
@@ -614,9 +650,22 @@ export default function StrategyPanel({ account, accounts = [], workerLive,
                    onChange={(v) => set('atr_period', v)} />
             </Field>
             <Field label="Minimum ATR" info="Skip the round unless average true range is above this. It is the &quot;only trade when BTC is actually moving&quot; rule. Set it to 0 to trade regardless." hint="0 = no gate">
-              <Num value={draft.atr_min} step={10} min={0} unit="pts"
+              <Num value={draft.atr_min} step={atrAssetOf(draft) === 'ETH' ? 1 : 10} min={0}
+                   unit={`${atrAssetOf(draft)} pts`}
                    onChange={(v) => set('atr_min', v)} />
             </Field>
+            {/* BTC's 15m ATR runs in the hundreds and ETH's around ten, so a
+                minimum carried across the switch is either always open or
+                never open. Said while the change is unsaved, when it can
+                still be fixed. */}
+            {saved && atrAssetOf(saved) !== atrAssetOf(draft) && (
+              <p className="col-span-full rounded-lg border border-amber-500/30 bg-amber-500/10
+                            px-3 py-2 text-[11px] text-amber-300">
+                ATR source changed to {atrAssetOf(draft)}. BTC ATR runs around 200 and
+                ETH around 10, so set Minimum ATR in {atrAssetOf(draft)} points
+                {live.atr != null && <> (it reads {live.atr.toFixed(1)} now)</>} before saving.
+              </p>
+            )}
           </Section>
 
           <Section title="Entry">

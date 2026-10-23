@@ -441,7 +441,7 @@ export default function TradePanel({ atrInfo, account, workerLive, slippage, onS
                   + ` more than ${Number(atrInfo.minimum).toFixed(0)} to enter a round.`
                 : `Wilder ATR on ${atrInfo.resolution} candles. No minimum is set,`
                   + ' so this filter passes every round.'}>
-                {atrInfo.resolution} ATR{' '}
+                {atrInfo.resolution}{atrInfo.asset ? ` ${atrInfo.asset}` : ''} ATR{' '}
                 <span className={Number(atrInfo.minimum) > 0
                   && atrInfo.atr <= Number(atrInfo.minimum)
                   ? 'text-amber-400' : 'text-slate-300'}>

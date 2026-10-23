@@ -304,13 +304,15 @@ class Engine:
             if stamp != acct.stamp:
                 acct.stamp = stamp
                 c = acct.cfg
-                log.info("settings %-16s %-8s | %s %s | %s | ATR>%.0f %s p%d | "
+                log.info("settings %-16s %-8s | %s %s | %s | %s ATR>%.0f %s p%d | "
                          "wing 1:%.0f %s (max %.4f) | exit %s/%s | $%.0f/leg | bal %.2f",
                          acct.name, "ARMED" if c.enabled else "DISARMED",
                          c.api.underlying,
                          c.entry.extremes_mode + ("+mid" if c.entry.trade_middle else ""),
                          ("session %s" % c.timing.sessions[0]) if c.timing.sessions
                          else "all hours",
+                         {".DEXBTUSDT": "BTC", ".DEETHUSDT": "ETH"}.get(
+                             c.atr.candle_symbol, c.atr.candle_symbol),
                          c.atr.min_atr, c.atr.resolution, c.atr.period,
                          c.entry.wing_odds,
                          "both" if c.entry.require_both_wings else "either",
@@ -326,7 +328,10 @@ class Engine:
         """Lay one settings row over a Config."""
         c.enabled = bool(row.get("enabled", c.enabled))
         c.api.underlying = row.get("underlying") or c.api.underlying
-        c.atr.candle_symbol = index_symbol_for(c.api.underlying)
+        # The gate reads the traded asset's ATR unless the account chose the
+        # other one (migration 030) - an ETH account may enter on BTC's moves.
+        c.atr.candle_symbol = index_symbol_for(
+            row.get("atr_asset") or c.api.underlying)
 
         c.atr.enabled = bool(row.get("atr_enabled", c.atr.enabled))
         c.atr.resolution = row.get("atr_resolution") or c.atr.resolution

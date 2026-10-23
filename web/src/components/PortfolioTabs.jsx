@@ -12,6 +12,7 @@ import { atrSeries, atrAt, lookbackHours } from '../lib/atr'
 import { summarise, fmt } from '../lib/stats'
 import InfoDot from './InfoDot'
 import ParityTab from './ParityTab'
+import AtrCompareTab from './AtrCompareTab'
 import ExportTrades from './ExportTrades'
 
 /**
@@ -1023,7 +1024,7 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
   const [closesOffline, setClosesOffline] = useState(false)
   // ATR settings come from the account's filters, so history is read through
   // whatever rule is currently in force rather than a value frozen at entry.
-  const [atrCfg, setAtrCfg] = useState({ resolution: '15m', period: 14 })
+  const [atrCfg, setAtrCfg] = useState({ resolution: '15m', period: 14, asset: null })
   // One running ATR series per underlying, keyed by asset.
   const [atrByAsset, setAtrByAsset] = useState({})
   // Bridges the gap between the click and the row appearing in the next poll.
@@ -1045,6 +1046,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         setAtrCfg({
           resolution: cfg.atr_resolution ?? '15m',
           period: Number(cfg.atr_period ?? 14),
+          // The asset whose ATR gates entries, when it is not the one traded.
+          asset: cfg.atr_asset ?? null,
         })
       })
       .catch(() => { /* fall back to the defaults above */ })
@@ -1125,8 +1128,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
   // one was due. A string and a number compare by value and settle.
   const atrAssets = useMemo(() => [...new Set(positions
     .filter((p) => p.status !== 'open')
-    .map((p) => assetOf(p.round_id))
-    .filter(Boolean))].sort().join(','), [positions])
+    .map((p) => atrCfg.asset || assetOf(p.round_id))
+    .filter(Boolean))].sort().join(','), [positions, atrCfg.asset])
 
   const atrFrom = useMemo(() => {
     const stamps = positions
@@ -1159,10 +1162,10 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
 
   const atrFor = useCallback((asset, tsMs) => {
     if (!Number.isFinite(tsMs)) return null
-    return atrAt(atrByAsset[asset], Math.floor(tsMs / 1000))
-  }, [atrByAsset])
+    return atrAt(atrByAsset[atrCfg.asset || asset], Math.floor(tsMs / 1000))
+  }, [atrByAsset, atrCfg.asset])
 
-  const atrLabel = `Wilder ATR(${atrCfg.period}) on ${atrCfg.resolution} candles,`
+  const atrLabel = `Wilder ATR(${atrCfg.period}) on ${atrCfg.asset ? `${atrCfg.asset} ` : ''}${atrCfg.resolution} candles,`
     + ' taken from the filters this account is running now'
 
   // What each open position is actually worth, walked through the book for
@@ -1443,7 +1446,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         {[['positions', 'Positions', open.length],
           ['trades', 'Recent Trades', closed.length],
           ['daily', 'Daily report', 0],
-          ['parity', 'Paper vs Live', 0]].map(([key, label, n]) => (
+          ['parity', 'Paper vs Live', 0],
+          ['atr', 'ETH vs BTC ATR', 0]].map(([key, label, n]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -1521,6 +1525,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
           <DailyTable mode={mode} />
         ) : tab === 'parity' ? (
           <ParityTab accounts={allAccounts} refreshKey={refreshKey} />
+        ) : tab === 'atr' ? (
+          <AtrCompareTab accountId={accountId} accountName={account?.name} />
         ) : (
           <TradesTable positions={closed} atrFor={atrFor} atrLabel={atrLabel} />
         )}

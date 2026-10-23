@@ -27,7 +27,7 @@ const NEVER_COPY = [...PLUMBING, 'enabled']
 /** Field names as the filters show them, for the confirmation list. */
 const LABELS = {
   underlying: 'Market', atr_resolution: 'ATR chart', atr_period: 'ATR candles',
-  atr_min: 'Minimum ATR', session_start: 'Start time', session_end: 'End time',
+  atr_min: 'Minimum ATR', atr_asset: 'ATR from', session_start: 'Start time', session_end: 'End time',
   session_timezone: 'Timezone', weekdays: 'Days',
   min_seconds_since_launch: 'Min age', max_seconds_since_launch: 'Max age',
   min_seconds_to_expiry: 'Min to expiry', max_seconds_to_expiry: 'Max to expiry',

@@ -257,6 +257,30 @@ export async function fetchTradeHistory(accountId = null) {
 }
 
 /**
+ * Finished legs entered since `sinceIso`, only the columns needed to score a
+ * round - the ATR comparison groups these by round. Paged for the same reason
+ * as fetchTradeHistory; narrow columns keep a 30-day read small.
+ */
+export async function fetchLegsSince(accountId, sinceIso) {
+  const PAGE = 1000
+  const rows = []
+  for (let page = 0; page < 50; page += 1) {
+    const { data, error } = await supabase
+      .from('positions')
+      .select('round_id,entry_time,pnl,status')
+      .eq('account_id', accountId)
+      .neq('status', 'open')
+      .gte('entry_time', sinceIso)
+      .order('entry_time', { ascending: true })
+      .range(page * PAGE, page * PAGE + PAGE - 1)
+    if (error) throw error
+    rows.push(...(data ?? []))
+    if (!data || data.length < PAGE) break
+  }
+  return rows
+}
+
+/**
  * Per-account, per-day results from the `daily_account_pnl` view.
  *
  * The view does the grouping because the alternative is pulling every
