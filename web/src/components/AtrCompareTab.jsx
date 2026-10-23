@@ -53,6 +53,18 @@ function pearson(xs, ys) {
   return dx && dy ? num / Math.sqrt(dx * dy) : null
 }
 
+/** Sample covariance: how far two series move away from their means together. */
+function covariance(xs, ys) {
+  const n = Math.min(xs.length, ys.length)
+  if (n < 3) return null
+  let sx = 0; let sy = 0
+  for (let i = 0; i < n; i += 1) { sx += xs[i]; sy += ys[i] }
+  const mx = sx / n; const my = sy / n
+  let c = 0
+  for (let i = 0; i < n; i += 1) c += (xs[i] - mx) * (ys[i] - my)
+  return c / (n - 1)
+}
+
 const median = (arr) => {
   const s = arr.filter(Number.isFinite).slice().sort((a, b) => a - b)
   if (!s.length) return null
@@ -309,6 +321,20 @@ export default function AtrCompareTab({ accountId, accountName }) {
     const withTr = bars.filter((b) => Number.isFinite(b.trB) && Number.isFinite(b.trE))
     const xs = bars.map((b) => b.btc); const ys = bars.map((b) => b.eth)
     const r = pearson(xs, ys)
+    // 15m price returns, in %, for the plain "do BTC and ETH move together"
+    // question - ATR answers it for volatility, this for direction.
+    const closeE = new Map(candles.ETH.map((c) => [c.time, Number(c.close)]))
+    const inWin = candles.BTC.filter((c) => c.time + STEP >= from && c.time + STEP <= now
+                                            && closeE.has(c.time))
+    const retB = []; const retE = []
+    for (let i = 1; i < inWin.length; i += 1) {
+      const pb = Number(inWin[i - 1].close); const pe = closeE.get(inWin[i - 1].time)
+      if (!pb || !pe) continue
+      retB.push((100 * (Number(inWin[i].close) - pb)) / pb)
+      retE.push((100 * (closeE.get(inWin[i].time) - pe)) / pe)
+    }
+    const covRet = covariance(retB, retE)
+    const varB = covariance(retB, retB)
     // Least-squares line for the scatter.
     let fit = null
     if (bars.length > 2) {
@@ -323,6 +349,10 @@ export default function AtrCompareTab({ accountId, accountName }) {
     return {
       bars, sB, sE, fit,
       rLevel: r,
+      covLevel: covariance(xs, ys),
+      rRet: pearson(retB, retE),
+      covRet,
+      beta: covRet != null && varB ? covRet / varB : null,
       rChange: pearson(dB, dE),
       rRange: pearson(withTr.map((b) => b.trB), withTr.map((b) => b.trE)),
       ratio: median(bars.map((b) => b.btc / b.eth)),
@@ -375,6 +405,18 @@ export default function AtrCompareTab({ accountId, accountName }) {
              agree: data.bars.length ? (100 * (cells.oo + cells.ss)) / data.bars.length : null }
   }, [data, legs, btcMin, ethMin])
 
+  // The "good number": the BTC gate that is open for the same share of bars
+  // as ETH's. With the two this correlated, it opens at nearly the same times.
+  const matching = useMemo(() => {
+    if (!data?.bars.length || !Number.isFinite(ethMin)) return null
+    const open = data.bars.filter((b) => b.eth > ethMin).length
+    const share = open / data.bars.length
+    const sorted = data.bars.map((b) => b.btc).sort((a, b) => a - b)
+    const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((1 - share) * sorted.length)))
+    const btc = Math.round(sorted[idx])
+    return { share: 100 * share, btc }
+  }, [data, ethMin])
+
   if (!accountId) {
     return <p className="py-10 text-center text-sm text-slate-600">Pick an account.</p>
   }
@@ -406,22 +448,53 @@ export default function AtrCompareTab({ accountId, accountName }) {
 
       {data && (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label="Correlation · ATR level" value={rText(data.rLevel)} tone={rTone(data.rLevel)}
                   sub="do they rise and fall together"
-                  title="Pearson correlation of the two ATR values, bar by bar." />
+                  title="Pearson correlation of the two ATR values, bar by bar. 1 = always together, 0 = unrelated." />
             <Stat label="Correlation · ATR change" value={rText(data.rChange)} tone={rTone(data.rChange)}
                   sub="bar-to-bar moves"
                   title="Correlation of each bar's change in ATR. Levels can correlate just because both trend; this asks whether they turn together." />
             <Stat label="Correlation · 15m range" value={rText(data.rRange)} tone={rTone(data.rRange)}
                   sub="raw true range per bar"
                   title="Correlation of each 15m bar's true range, before any smoothing." />
+            <Stat label="Correlation · 15m returns" value={rText(data.rRet)} tone={rTone(data.rRet)}
+                  sub="price moves, % per bar"
+                  title="Correlation of each 15m bar's % price change: do BTC and ETH move in the same direction." />
+            <Stat label="Covariance · ATR" value={data.covLevel != null ? data.covLevel.toFixed(1) : '—'}
+                  sub="BTC pts × ETH pts"
+                  title="Sample covariance of the two ATRs. Positive = they rise and fall together; its size depends on the units, so read it next to the correlation." />
+            <Stat label="Covariance · 15m returns"
+                  value={data.covRet != null ? data.covRet.toFixed(4) : '—'}
+                  sub={`%² per bar · ETH beta ${data.beta != null ? data.beta.toFixed(2) : '—'}`}
+                  title="Sample covariance of 15m % returns. Beta = covariance ÷ BTC variance: how many % ETH moves for each 1% BTC move." />
             <Stat label="BTC ÷ ETH ATR" value={data.ratio ? `${data.ratio.toFixed(1)}×` : '—'}
                   sub="median over the window" />
             <Stat label="Gates agree"
                   value={matrix?.agree != null ? `${matrix.agree.toFixed(0)}%` : '—'}
                   sub={`of ${data.bars.length} bars, at these thresholds`} />
           </div>
+
+          {matching && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border
+                            border-sky-500/25 bg-sky-500/[0.06] px-3 py-2.5">
+              <div className="text-xs text-slate-300">
+                <p className="text-[11px] text-slate-500">Matching BTC gate</p>
+                <p className="nums mt-0.5">
+                  <span style={{ color: ETH_C }}>ETH &gt; {ethMin}</span> is open{' '}
+                  {matching.share.toFixed(0)}% of bars.{' '}
+                  <span style={{ color: BTC_C }}>BTC &gt; {matching.btc}</span> is open the same{' '}
+                  {matching.share.toFixed(0)}%, so it opens at nearly the same times.
+                </p>
+              </div>
+              <button type="button" onClick={() => setBtcMin(matching.btc)}
+                      disabled={btcMin === matching.btc}
+                      className="rounded-md border border-sky-500/30 px-2.5 py-1 text-[11px]
+                                 font-medium text-sky-300 hover:bg-sky-500/10 disabled:opacity-40">
+                Use {matching.btc} as BTC gate
+              </button>
+            </div>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <div className="rounded-lg border border-white/10 bg-ink-950 p-3">
