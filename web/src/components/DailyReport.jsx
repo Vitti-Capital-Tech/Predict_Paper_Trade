@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchAccounts, fetchBalanceHistory, fetchDailyPnl } from '../lib/supabase'
 import { fmt } from '../lib/stats'
+import Dropdown from './Dropdown'
+import InfoDot from './InfoDot'
 
 /**
  * Daily report.
@@ -23,10 +25,17 @@ const IST = 'Asia/Kolkata'
 const istDate = (t) => new Date(t).toLocaleDateString('en-CA', { timeZone: IST })
 const dayLabel = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-US',
   { day: 'numeric', month: 'short', weekday: 'short' })
+const monthOf = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-US',
+  { month: 'long', year: 'numeric' })
 
 const tone = (v) => (v > 0 ? 'text-emerald-400' : v < 0 ? 'text-rose-400' : 'text-slate-300')
 const signedUsd = (v) => `${v >= 0 ? '+' : '-'}${fmt.usd(Math.abs(v))}`
 const signedPct = (v) => `${v >= 0 ? '+' : ''}${fmt.pct(v)}`
+
+const INFO = 'Every figure comes from finished trades, or from the balance saved at '
+  + 'midnight IST - nothing is worked back from today, so past days never change. '
+  + 'Return is P&L divided by money invested. Days run to IST midnight. Balance now '
+  + 'is the same as the top right.'
 
 function total(rows) {
   const pnl = rows.reduce((a, r) => a + Number(r.pnl ?? 0), 0)
@@ -44,12 +53,27 @@ function PnlCell({ t, muted = 'no trades' }) {
   )
 }
 
+// A thin bar beside a day's return, sized against the biggest in view, so the
+// good and bad days stand out without reading every number.
+function ReturnBar({ ret, max }) {
+  const w = Math.max(4, (48 * Math.abs(ret)) / max)
+  return (
+    <span className="flex h-1.5 w-12 overflow-hidden rounded-full bg-white/5">
+      <span className={`h-full rounded-full ${ret >= 0 ? 'bg-emerald-400/80' : 'bg-rose-400/80'}`}
+            style={{ width: `${Math.min(48, w)}px` }} />
+    </span>
+  )
+}
+
+const PERIODS = [['7', '7 days'], ['30', '30 days'], ['all', 'All']]
+
 export default function DailyReport({ mode = 'paper', accountId }) {
   const [rows, setRows] = useState(null)
   const [accounts, setAccounts] = useState([])
   const [history, setHistory] = useState(null)   // null until 031 has run
   const [error, setError] = useState(null)
   const [picked, setPicked] = useState(null)
+  const [period, setPeriod] = useState('30')
 
   useEffect(() => {
     let alive = true
@@ -68,7 +92,7 @@ export default function DailyReport({ mode = 'paper', accountId }) {
   const shown = useMemo(
     () => accounts.filter((a) => (a.mode ?? 'paper') === mode), [accounts, mode])
 
-  // The account in the header, unless a summary row was clicked.
+  // The account in the header, unless one was picked here.
   const selectedId = (picked && shown.some((a) => a.id === picked)) ? picked
     : shown.some((a) => a.id === accountId) ? accountId : shown[0]?.id
 
@@ -115,60 +139,116 @@ export default function DailyReport({ mode = 'paper', accountId }) {
 
   const selected = shown.find((a) => a.id === selectedId)
   const hasWinRate = (rows ?? []).some((r) => r.rounds_won != null)
-  const th = 'px-3 py-2 font-medium'
+  const th = 'px-3 py-2.5 font-medium'
+
+  // Summary totals across every account on this side.
+  const sideRows = shown.flatMap((a) => byAccount.get(a.id) ?? [])
+  const sideBalance = shown.reduce((a, x) => a + Number(x.balance ?? 0), 0)
+
+  // Day table: the chosen period, newest first.
+  const cutoff = period === 'all' ? null
+    : istDate(Date.now() - (Number(period) - 1) * 86400000)
+  const shownDays = cutoff ? days.filter((d) => d.day >= cutoff) : days
+  const traded = shownDays.filter((d) => d.r)
+  const sumRounds = traded.reduce((a, d) => a + Number(d.r.rounds), 0)
+  const sumWon = traded.reduce((a, d) => a + Number(d.r.rounds_won ?? 0), 0)
+  const periodTotal = total(traded.map((d) => d.r))
+  const maxRet = Math.max(1, ...traded.map((d) => Math.abs(d.t.ret ?? 0)))
+
+  const seg = (on) => `rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+    on ? 'bg-sky-500/20 text-sky-300' : 'text-slate-500 hover:text-slate-300'}`
 
   return (
-    <div className="space-y-5">
-      <p className="text-[11px] leading-relaxed text-slate-500">
-        Every figure comes from finished trades, or from the balance saved at midnight IST -
-        nothing is worked back from today, so past days never change. <b className="font-medium text-slate-400">Return</b> is
-        P&amp;L ÷ money invested. Days run to IST midnight.
-      </p>
-
-      {/* Summary: one line per account on this side. */}
-      <div className="-mx-4 overflow-x-auto">
-        <table className="nums w-full min-w-[640px] text-[13px]">
-          <thead className="text-[11px] uppercase tracking-wide text-slate-500">
-            <tr className="border-b border-white/10">
-              <th className={`${th} pl-4 text-left`}>Account</th>
-              <th className={`${th} text-right`} title="The account's balance right now - the same figure as the top right.">Balance now</th>
-              <th className={`${th} text-right`}>Today</th>
-              <th className={`${th} text-right`}>Last 7 days</th>
-              <th className={`${th} pr-4 text-right`}>All time</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-white/5">
-            {shown.map((a) => {
-              const mine = byAccount.get(a.id) ?? []
-              const on = a.id === selectedId
-              return (
-                <tr key={a.id} onClick={() => setPicked(a.id)}
-                    className={`cursor-pointer transition-colors ${on ? 'bg-sky-500/[0.08]' : 'hover:bg-white/[0.03]'}`}>
-                  <td className={`py-2 pl-4 pr-3 ${on ? 'font-semibold text-sky-300' : 'text-slate-300'}`}>
-                    {on && <span className="mr-1.5">▸</span>}{a.name}
+    <div className="space-y-6">
+      {/* ------------------------------------------------------ summary -- */}
+      <section>
+        <div className="mb-2 flex items-center gap-1.5">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Accounts</h4>
+          <InfoDot side="bottom" text={INFO} />
+        </div>
+        <div className="-mx-4 overflow-x-auto">
+          <table className="nums w-full min-w-[640px] text-[13px]">
+            <thead className="text-[11px] uppercase tracking-wide text-slate-500">
+              <tr className="border-b border-white/10">
+                <th className={`${th} pl-4 text-left`}>Account</th>
+                <th className={`${th} text-right`}>Balance now</th>
+                <th className={`${th} text-right`}>Today</th>
+                <th className={`${th} text-right`}>Last 7 days</th>
+                <th className={`${th} pr-4 text-right`}>All time</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {shown.map((a) => {
+                const mine = byAccount.get(a.id) ?? []
+                const on = a.id === selectedId
+                return (
+                  <tr key={a.id} onClick={() => setPicked(a.id)}
+                      className={`cursor-pointer transition-colors ${
+                        on ? 'bg-sky-500/[0.07] shadow-[inset_3px_0_0_0_rgb(56_189_248)]'
+                          : 'hover:bg-white/[0.03]'}`}>
+                    <td className={`py-2.5 pl-4 pr-3 ${on ? 'font-semibold text-slate-100' : 'text-slate-300'}`}>
+                      {a.name}
+                    </td>
+                    <td className="px-3 py-2.5 text-right text-slate-200">{fmt.usd(Number(a.balance ?? 0))}</td>
+                    <td className="px-3 py-2.5 text-right">
+                      <PnlCell t={total(mine.filter((r) => r.day === today))} muted="—" />
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      <PnlCell t={total(mine.filter((r) => r.day >= weekStart))} muted="—" />
+                    </td>
+                    <td className="py-2.5 pl-3 pr-4 text-right"><PnlCell t={total(mine)} muted="—" /></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+            {shown.length > 1 && (
+              <tfoot>
+                <tr className="border-t border-white/15 font-semibold">
+                  <td className="py-2.5 pl-4 pr-3 text-[11px] uppercase tracking-wide text-slate-400">Total</td>
+                  <td className="px-3 py-2.5 text-right text-slate-100">{fmt.usd(sideBalance)}</td>
+                  <td className="px-3 py-2.5 text-right">
+                    <PnlCell t={total(sideRows.filter((r) => r.day === today))} muted="—" />
                   </td>
-                  <td className="px-3 py-2 text-right text-slate-200">{fmt.usd(Number(a.balance ?? 0))}</td>
-                  <td className="px-3 py-2 text-right"><PnlCell t={total(mine.filter((r) => r.day === today))} muted="—" /></td>
-                  <td className="px-3 py-2 text-right"><PnlCell t={total(mine.filter((r) => r.day >= weekStart))} muted="—" /></td>
-                  <td className="py-2 pl-3 pr-4 text-right"><PnlCell t={total(mine)} muted="—" /></td>
+                  <td className="px-3 py-2.5 text-right">
+                    <PnlCell t={total(sideRows.filter((r) => r.day >= weekStart))} muted="—" />
+                  </td>
+                  <td className="py-2.5 pl-3 pr-4 text-right"><PnlCell t={total(sideRows)} muted="—" /></td>
                 </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </section>
 
-      {/* The selected account, day by day. */}
-      <div>
-        <h4 className="mb-2 text-xs font-semibold text-slate-300">
-          {selected?.name} <span className="font-normal text-slate-500">· day by day</span>
-          <span className="ml-2 font-normal text-slate-600">(click an account above to switch)</span>
-        </h4>
-        {!days.length ? (
-          <p className="py-6 text-center text-sm text-slate-600">No finished trades yet.</p>
+      {/* --------------------------------------------------- day by day -- */}
+      <section>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Day by day <span className="normal-case tracking-normal text-slate-500">· {selected?.name}</span>
+          </h4>
+          <div className="flex items-center gap-2">
+            <div role="tablist" aria-label="Period"
+                 className="flex rounded-lg border border-white/10 bg-ink-950 p-0.5">
+              {PERIODS.map(([k, l]) => (
+                <button key={k} role="tab" aria-selected={period === k}
+                        onClick={() => setPeriod(k)} className={seg(period === k)}>{l}</button>
+              ))}
+            </div>
+            <Dropdown
+              ariaLabel="Account" size="sm" align="right" className="min-w-[10rem]"
+              value={selectedId} onChange={setPicked}
+              options={shown.map((a) => ({ value: a.id, label: a.name }))}
+            />
+          </div>
+        </div>
+
+        {!shownDays.length ? (
+          <p className="rounded-lg border border-white/5 py-8 text-center text-sm text-slate-600">
+            No finished trades in this period.
+          </p>
         ) : (
           <div className="-mx-4 overflow-x-auto">
-            <table className="nums w-full min-w-[760px] text-[13px]">
+            <table className="nums w-full min-w-[820px] text-[13px]">
               <thead className="text-[11px] uppercase tracking-wide text-slate-500">
                 <tr className="border-b border-white/10">
                   <th className={`${th} pl-4 text-left`}>Day</th>
@@ -176,32 +256,76 @@ export default function DailyReport({ mode = 'paper', accountId }) {
                   <th className={`${th} text-right`} title="Rounds that made money ÷ rounds finished that day">Win rate</th>
                   <th className={`${th} text-right`}>Invested</th>
                   <th className={`${th} text-right`}>P&amp;L</th>
-                  <th className={`${th} text-right`}>Return</th>
+                  <th className={`${th} text-right`} title="P&L ÷ money invested that day">Return</th>
                   <th className={`${th} text-right`} title="P&L added up from the first trade to the end of this day">Total so far</th>
-                  <th className={`${th} pr-4 text-right`} title="Saved at midnight IST: balance plus open trades at cost. '—' for days before saving began.">Balance at day end</th>
+                  <th className={`${th} pr-4 text-right`}
+                      title="Saved at midnight IST: balance plus open trades at cost. '—' for days before saving began.">
+                    Balance at day end
+                  </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5">
-                {days.map(({ day, r, t, soFar, snap }) => (
-                  <tr key={day} className="hover:bg-white/[0.02]">
-                    <td className="whitespace-nowrap py-2 pl-4 pr-3 text-slate-300">
-                      {dayLabel(day)}{day === today && <span className="ml-1.5 text-[10px] text-sky-400">today</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right text-slate-400">{r ? r.rounds : '—'}</td>
-                    <td className="px-3 py-2 text-right text-slate-400">
-                      {r && hasWinRate && r.rounds ? fmt.pct((100 * Number(r.rounds_won ?? 0)) / Number(r.rounds), 0) : '—'}
-                    </td>
-                    <td className="px-3 py-2 text-right text-slate-400">{r ? fmt.usd(Number(r.invested)) : '—'}</td>
-                    <td className={`px-3 py-2 text-right ${r ? tone(t.pnl) : 'text-slate-700'}`}>{r ? signedUsd(t.pnl) : 'no trades'}</td>
-                    <td className={`px-3 py-2 text-right ${r ? tone(t.pnl) : 'text-slate-700'}`}>{r && t.ret != null ? signedPct(t.ret) : '—'}</td>
-                    <td className={`px-3 py-2 text-right ${tone(soFar)}`}>{signedUsd(soFar)}</td>
-                    <td className="py-2 pl-3 pr-4 text-right text-slate-200"
-                        title={snap ? `${fmt.usd(snap.balance)} balance + ${fmt.usd(snap.open)} in open trades` : undefined}>
-                      {snap ? fmt.usd(snap.total) : <span className="text-slate-700">—</span>}
-                    </td>
-                  </tr>
-                ))}
+              <tbody>
+                {shownDays.map(({ day, r, t, soFar, snap }, i) => {
+                  const newMonth = i === 0 || monthOf(day) !== monthOf(shownDays[i - 1].day)
+                  return [
+                    newMonth && (
+                      <tr key={`m-${day}`}>
+                        <td colSpan={8}
+                            className="px-4 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                          {monthOf(day)}
+                        </td>
+                      </tr>
+                    ),
+                    <tr key={day} className="border-t border-white/5 hover:bg-white/[0.02]">
+                      <td className="whitespace-nowrap py-2.5 pl-4 pr-3 text-slate-300">
+                        {dayLabel(day)}
+                        {day === today && (
+                          <span className="ml-1.5 rounded bg-sky-500/15 px-1 py-px text-[10px] text-sky-300">today</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5 text-right text-slate-400">{r ? r.rounds : '—'}</td>
+                      <td className="px-3 py-2.5 text-right text-slate-400">
+                        {r && hasWinRate && r.rounds
+                          ? fmt.pct((100 * Number(r.rounds_won ?? 0)) / Number(r.rounds), 0) : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-right text-slate-400">{r ? fmt.usd(Number(r.invested)) : '—'}</td>
+                      <td className={`px-3 py-2.5 text-right font-medium ${r ? tone(t.pnl) : 'text-slate-700'}`}>
+                        {r ? signedUsd(t.pnl) : 'no trades'}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        {r && t.ret != null ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <span className={tone(t.pnl)}>{signedPct(t.ret)}</span>
+                            <ReturnBar ret={t.ret} max={maxRet} />
+                          </div>
+                        ) : <div className="text-right text-slate-700">—</div>}
+                      </td>
+                      <td className={`px-3 py-2.5 text-right ${tone(soFar)}`}>{signedUsd(soFar)}</td>
+                      <td className="py-2.5 pl-3 pr-4 text-right text-slate-200"
+                          title={snap ? `${fmt.usd(snap.balance)} balance + ${fmt.usd(snap.open)} in open trades` : undefined}>
+                        {snap ? fmt.usd(snap.total) : <span className="text-slate-700">—</span>}
+                      </td>
+                    </tr>,
+                  ]
+                })}
               </tbody>
+              <tfoot>
+                <tr className="border-t border-white/15 font-semibold">
+                  <td className="py-2.5 pl-4 pr-3 text-[11px] uppercase tracking-wide text-slate-400">
+                    {period === 'all' ? 'All time' : `Last ${period} days`}
+                  </td>
+                  <td className="px-3 py-2.5 text-right text-slate-200">{sumRounds || '—'}</td>
+                  <td className="px-3 py-2.5 text-right text-slate-200">
+                    {hasWinRate && sumRounds ? fmt.pct((100 * sumWon) / sumRounds, 0) : '—'}
+                  </td>
+                  <td className="px-3 py-2.5 text-right text-slate-200">{fmt.usd(periodTotal.invested)}</td>
+                  <td className={`px-3 py-2.5 text-right ${tone(periodTotal.pnl)}`}>{signedUsd(periodTotal.pnl)}</td>
+                  <td className={`px-3 py-2.5 text-right ${tone(periodTotal.pnl)}`}>
+                    {periodTotal.ret != null ? signedPct(periodTotal.ret) : '—'}
+                  </td>
+                  <td colSpan={2} />
+                </tr>
+              </tfoot>
             </table>
           </div>
         )}
@@ -211,11 +335,10 @@ export default function DailyReport({ mode = 'paper', accountId }) {
           </p>
         ) : !history.some((h) => h.account_id === selectedId) && (
           <p className="mt-2 text-[11px] text-slate-500">
-            Balance at day end is saved every night at midnight IST, from the first
-            midnight after this was set up - earlier days show &quot;—&quot;.
+            Balance at day end is saved every night at midnight IST - days before that show &quot;—&quot;.
           </p>
         )}
-      </div>
+      </section>
     </div>
   )
 }
