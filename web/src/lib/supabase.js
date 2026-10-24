@@ -219,6 +219,19 @@ export async function fetchAccountPositions(accountId) {
   return data ?? []
 }
 
+/**
+ * Each account's balance as saved at midnight IST (migration 031). Throws
+ * until that migration has run; the caller treats that as "no history yet".
+ */
+export async function fetchBalanceHistory() {
+  const { data, error } = await supabase
+    .from('account_balance_daily')
+    .select('account_id,day,balance,open_stake')
+    .order('day', { ascending: true })
+  if (error) throw error
+  return data ?? []
+}
+
 /** Only the legs still open - the cheap read the dashboard polls every tick. */
 export async function fetchOpenPositions(accountId) {
   const { data, error } = await supabase
