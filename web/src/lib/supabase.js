@@ -232,6 +232,20 @@ export async function fetchBalanceHistory() {
   return data ?? []
 }
 
+/** What every account has in open trades, at what was paid - a few rows. */
+export async function fetchOpenStakes() {
+  const { data, error } = await supabase
+    .from('positions')
+    .select('account_id,entry_price,qty')
+    .eq('status', 'open')
+  if (error) throw error
+  const out = new Map()
+  for (const p of data ?? []) {
+    out.set(p.account_id, (out.get(p.account_id) ?? 0) + Number(p.entry_price) * Number(p.qty))
+  }
+  return out
+}
+
 /** Only the legs still open - the cheap read the dashboard polls every tick. */
 export async function fetchOpenPositions(accountId) {
   const { data, error } = await supabase

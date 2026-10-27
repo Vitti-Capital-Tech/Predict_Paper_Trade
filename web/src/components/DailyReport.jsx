@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fetchAccounts, fetchBalanceHistory, fetchDailyPnl } from '../lib/supabase'
+import { fetchAccounts, fetchBalanceHistory, fetchDailyPnl, fetchOpenStakes } from '../lib/supabase'
 import { fmt } from '../lib/stats'
 import Dropdown from './Dropdown'
 import InfoDot from './InfoDot'
@@ -66,6 +66,100 @@ function ReturnBar({ ret, max }) {
 }
 
 const PERIODS = [['7', '7 days'], ['30', '30 days'], ['all', 'All']]
+const VIEW_KEY = 'predict.dailyView'
+
+const SIMPLE_INFO = 'Each day: the balance at the end of the day, and that day\'s P&L '
+  + '(in brackets: how much it grew the balance the day started with). The newest '
+  + 'balance is the real one - the same as the top right - and earlier days count '
+  + 'back from it using each day\'s P&L, or use the balance saved at midnight IST '
+  + 'where there is one. Days run to IST midnight.'
+
+/**
+ * The familiar view: days down the side, one column per account, each cell
+ * the day-end balance with the day's P&L beneath it.
+ *
+ * Balances count BACK from the real balance (plus open trades at cost), so
+ * the newest row always equals the header - the old forward count from the
+ * starting balance read $550.82 for Prathav against $1,128.36 held. Where the
+ * database saved a balance at midnight, that recorded figure wins and the
+ * count continues back from it.
+ */
+function SimpleGrid({ shown, byAccount, history, stakes, today }) {
+  const { days, cells } = useMemo(() => {
+    const snap = new Map((history ?? []).map((h) => [`${h.account_id}|${h.day}`,
+      Number(h.balance) + Number(h.open_stake ?? 0)]))
+    const pnl = new Map()
+    const daySet = new Set()
+    for (const a of shown) {
+      for (const r of byAccount.get(a.id) ?? []) {
+        pnl.set(`${a.id}|${r.day}`, r)
+        daySet.add(r.day)
+      }
+    }
+    for (const h of history ?? []) {
+      if (shown.some((a) => a.id === h.account_id)) daySet.add(h.day)
+    }
+    const days = [...daySet].sort().reverse()
+    const cells = new Map()
+    for (const a of shown) {
+      let bal = Number(a.balance ?? 0) + (stakes.get(a.id) ?? 0)
+      for (const d of days) {
+        const key = `${a.id}|${d}`
+        if (snap.has(key)) bal = snap.get(key)
+        const r = pnl.get(key)
+        const dayPnl = Number(r?.pnl ?? 0)
+        const opening = bal - dayPnl
+        cells.set(key, { bal, r, pnl: dayPnl,
+                         pct: r && opening > 0 ? (100 * dayPnl) / opening : null })
+        bal = opening
+      }
+    }
+    return { days, cells }
+  }, [shown, byAccount, history, stakes])
+
+  if (!days.length) {
+    return <p className="py-10 text-center text-sm text-slate-600">Nothing has settled yet.</p>
+  }
+  return (
+    <div className="-mx-4 overflow-x-auto">
+      <table className="nums w-full text-[13px]">
+        <thead className="text-[11px] uppercase tracking-wide text-slate-500">
+          <tr className="border-b border-white/10">
+            <th className="px-4 py-2.5 text-left font-medium">Day</th>
+            {shown.map((a) => (
+              <th key={a.id} className="px-4 py-2.5 text-right font-medium">{a.name}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-white/5">
+          {days.map((d) => (
+            <tr key={d} className="hover:bg-white/[0.02]">
+              <td className="whitespace-nowrap px-4 py-2.5 text-slate-300">
+                {dayLabel(d)}
+                {d === today && (
+                  <span className="ml-1.5 rounded bg-sky-500/15 px-1 py-px text-[10px] text-sky-300">today</span>
+                )}
+              </td>
+              {shown.map((a) => {
+                const c = cells.get(`${a.id}|${d}`)
+                return (
+                  <td key={a.id} className="px-4 py-2.5 text-right"
+                      title={c?.r ? `${c.r.rounds} rounds, ${fmt.usd(Number(c.r.invested))} invested` : 'No trades finished this day'}>
+                    <div className="text-slate-200">{fmt.usd(c.bal)}</div>
+                    <div className={`text-[11px] ${c.r ? tone(c.pnl) : 'text-slate-700'}`}>
+                      {c.r ? signedUsd(c.pnl) : 'no trades'}
+                      {c.pct != null && <span className="ml-1 opacity-80">({signedPct(c.pct)})</span>}
+                    </div>
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 export default function DailyReport({ mode = 'paper', accountId }) {
   const [rows, setRows] = useState(null)
@@ -74,15 +168,26 @@ export default function DailyReport({ mode = 'paper', accountId }) {
   const [error, setError] = useState(null)
   const [picked, setPicked] = useState(null)
   const [period, setPeriod] = useState('30')
+  const [stakes, setStakes] = useState(new Map())
+  // Simple (the familiar grid) is the default; Detailed is opt-in.
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem(VIEW_KEY) === 'detailed' ? 'detailed' : 'simple' } catch { return 'simple' }
+  })
+  const pickView = (v) => {
+    setView(v)
+    try { localStorage.setItem(VIEW_KEY, v) } catch { /* private mode */ }
+  }
 
   useEffect(() => {
     let alive = true
-    Promise.all([fetchDailyPnl(), fetchAccounts(), fetchBalanceHistory().catch(() => null)])
-      .then(([daily, accts, hist]) => {
+    Promise.all([fetchDailyPnl(), fetchAccounts(), fetchBalanceHistory().catch(() => null),
+                 fetchOpenStakes().catch(() => new Map())])
+      .then(([daily, accts, hist, open]) => {
         if (!alive) return
         setRows(daily)
         setAccounts(accts)
         setHistory(hist)
+        setStakes(open)
         setError(null)
       })
       .catch((e) => alive && setError(e.message ?? String(e)))
@@ -159,6 +264,25 @@ export default function DailyReport({ mode = 'paper', accountId }) {
     on ? 'bg-sky-500/20 text-sky-300' : 'text-slate-500 hover:text-slate-300'}`
 
   return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1.5">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Daily report</h4>
+          <InfoDot side="bottom" text={view === 'simple' ? SIMPLE_INFO : INFO} />
+        </div>
+        <div role="tablist" aria-label="Report view"
+             className="flex rounded-lg border border-white/10 bg-ink-950 p-0.5">
+          {[['simple', 'Simple'], ['detailed', 'Detailed']].map(([k, l]) => (
+            <button key={k} role="tab" aria-selected={view === k}
+                    onClick={() => pickView(k)} className={seg(view === k)}>{l}</button>
+          ))}
+        </div>
+      </div>
+
+      {view === 'simple' ? (
+        <SimpleGrid shown={shown} byAccount={byAccount} history={history}
+                    stakes={stakes} today={today} />
+      ) : (
     <div className="space-y-6">
       {/* ------------------------------------------------------ summary -- */}
       <section>
@@ -339,6 +463,8 @@ export default function DailyReport({ mode = 'paper', accountId }) {
           </p>
         )}
       </section>
+    </div>
+      )}
     </div>
   )
 }
