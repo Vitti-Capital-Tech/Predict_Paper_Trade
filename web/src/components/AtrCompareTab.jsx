@@ -17,6 +17,11 @@ import { fmt } from '../lib/stats'
  *   - the account's own rounds in each corner of that matrix: count, win rate
  *     and P&L, so "would BTC's gate have picked better rounds?" has a number
  *
+ * One asset is the base (ETH by default, gate > 10). The other's equivalent
+ * gate comes from a least-squares fit of its ATR on the base's over the
+ * window, with bands at ±1 and ±2 residual SDs: how far its real ATR has sat
+ * from what the fit predicts.
+ *
  * The rounds are only ones the bot actually entered under its real gate.
  * Rounds the other gate would have opened but the real one kept shut never
  * happened, so they cannot be scored - the matrix shows which of the trades
@@ -29,6 +34,14 @@ const BTC_C = '#f59e0b'   // amber-500
 const ETH_C = '#a78bfa'   // violet-400
 const IST = 'Asia/Kolkata'
 const RANGES = [['1d', '1D', 1], ['7d', '7D', 7], ['30d', '30D', 30]]
+const COLOR = { BTC: BTC_C, ETH: ETH_C }
+const KEY = { BTC: 'btc', ETH: 'eth' }
+const OTHER = { BTC: 'ETH', ETH: 'BTC' }
+const DEFAULT_BASE = 'ETH'
+const DEFAULT_MIN = 10
+// BTC's ATR runs in the hundreds, ETH's around ten.
+const atrText = (asset, v) => (asset === 'BTC' ? v.toFixed(0) : v.toFixed(1))
+const roundAtr = (asset, v) => (asset === 'BTC' ? Math.round(v) : Math.round(v * 10) / 10)
 
 const chip = (on) => `rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
   on ? 'bg-white/10 text-slate-100' : 'text-slate-500 hover:text-slate-300'}`
@@ -63,6 +76,33 @@ function covariance(xs, ys) {
   let c = 0
   for (let i = 0; i < n; i += 1) c += (xs[i] - mx) * (ys[i] - my)
   return c / (n - 1)
+}
+
+/**
+ * Least squares of y on x, with the residual SD - how far the real y sits from
+ * the line - and the share of points that actually fall within 1 and 2 SDs.
+ */
+function fitLine(xs, ys) {
+  const n = Math.min(xs.length, ys.length)
+  if (n < 3) return null
+  let sx = 0; let sy = 0
+  for (let i = 0; i < n; i += 1) { sx += xs[i]; sy += ys[i] }
+  const mx = sx / n; const my = sy / n
+  let num = 0; let den = 0
+  for (let i = 0; i < n; i += 1) {
+    num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) ** 2
+  }
+  if (!den) return null
+  const b = num / den; const a = my - b * mx
+  const res = []
+  let ss = 0
+  for (let i = 0; i < n; i += 1) {
+    const r = ys[i] - (a + b * xs[i])
+    ss += r * r; res.push(Math.abs(r))
+  }
+  const sd = Math.sqrt(ss / (n - 2))
+  const within = (k) => (100 * res.filter((r) => r <= k * sd).length) / n
+  return { a, b, sd, in1: within(1), in2: within(2) }
 }
 
 const median = (arr) => {
@@ -113,23 +153,38 @@ function Threshold({ asset, color, value, onChange, hint }) {
   )
 }
 
-/** Both ATRs over time, each on its own axis: BTC left, ETH right. */
-function TimeChart({ bars, btcMin, ethMin }) {
+/**
+ * Both ATRs over time, each on its own axis: BTC left, ETH right. With a fit,
+ * the other asset's ATR as predicted from the base's is drawn dotted on its
+ * axis, inside a shaded ±1 SD band.
+ */
+function TimeChart({ bars, btcMin, ethMin, base, fit }) {
   const W = 760; const H = 220; const L = 44; const R = 44; const T = 10; const B = 24
   if (bars.length < 2) return null
   const t0 = bars[0].t; const t1 = bars[bars.length - 1].t
   const x = (t) => L + ((t - t0) / Math.max(1, t1 - t0)) * (W - L - R)
   const scale = (vals, extra) => {
     const all = vals.concat(Number.isFinite(extra) ? [extra] : [])
-    const lo = Math.min(...all); const hi = Math.max(...all)
+    let lo = Infinity; let hi = -Infinity
+    for (const v of all) { if (v < lo) lo = v; if (v > hi) hi = v }
     const pad = (hi - lo) * 0.08 || 1
     return [lo - pad, hi + pad]
   }
-  const [bLo, bHi] = scale(bars.map((b) => b.btc), btcMin)
-  const [eLo, eHi] = scale(bars.map((b) => b.eth), ethMin)
+  const other = OTHER[base]
+  const pred = fit ? bars.map((b) => fit.a + fit.b * b[KEY[base]]) : null
+  const band = pred ? pred.flatMap((p) => [p - fit.sd, p + fit.sd]) : []
+  const [bLo, bHi] = scale(bars.map((b) => b.btc).concat(other === 'BTC' ? band : []), btcMin)
+  const [eLo, eHi] = scale(bars.map((b) => b.eth).concat(other === 'ETH' ? band : []), ethMin)
   const yB = (v) => T + (1 - (v - bLo) / (bHi - bLo)) * (H - T - B)
   const yE = (v) => T + (1 - (v - eLo) / (eHi - eLo)) * (H - T - B)
   const path = (key, y) => bars.map((b, i) => `${i ? 'L' : 'M'}${x(b.t).toFixed(1)},${y(b[key]).toFixed(1)}`).join('')
+  const yO = other === 'BTC' ? yB : yE
+  const predPath = pred && pred.map((p, i) => `${i ? 'L' : 'M'}${x(bars[i].t).toFixed(1)},${yO(p).toFixed(1)}`).join('')
+  const bandPath = pred && [
+    ...pred.map((p, i) => `${i ? 'L' : 'M'}${x(bars[i].t).toFixed(1)},${yO(p + fit.sd).toFixed(1)}`),
+    ...pred.map((p, i) => [i, p]).reverse()
+      .map(([i, p]) => `L${x(bars[i].t).toFixed(1)},${yO(p - fit.sd).toFixed(1)}`),
+    'Z'].join('')
   const ticks = [0, 0.25, 0.5, 0.75, 1]
   const xTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => t0 + f * (t1 - t0))
   return (
@@ -163,49 +218,117 @@ function TimeChart({ bars, btcMin, ethMin }) {
         <line x1={L} x2={W - R} y1={yE(ethMin)} y2={yE(ethMin)} stroke={ETH_C}
               strokeDasharray="4 4" strokeOpacity="0.5" />
       )}
+      {bandPath && <path d={bandPath} fill={COLOR[other]} fillOpacity="0.25" stroke="none" />}
       <path d={path('btc', yB)} fill="none" stroke={BTC_C} strokeWidth="1.5" />
       <path d={path('eth', yE)} fill="none" stroke={ETH_C} strokeWidth="1.5" />
+      {predPath && (
+        <path d={predPath} fill="none" stroke={COLOR[other]} strokeWidth="1"
+              strokeDasharray="2 3" strokeOpacity="0.9" />
+      )}
     </svg>
   )
 }
 
-/** ETH ATR against BTC ATR, one dot per bar, split by the two gates. */
-function Scatter({ bars, btcMin, ethMin, fit }) {
+/**
+ * The other asset's ATR against the base's, one dot per bar, with the fit
+ * line and its ±1 SD band (clipped to the plot).
+ */
+function Scatter({ bars, base, baseMin, otherMin, fit }) {
   const S = 300; const P = 36
   if (bars.length < 3) return null
-  const xs = bars.map((b) => b.btc); const ys = bars.map((b) => b.eth)
-  const xLo = Math.min(...xs); const xHi = Math.max(...xs)
-  const yLo = Math.min(...ys); const yHi = Math.max(...ys)
+  const other = OTHER[base]
+  const xs = bars.map((b) => b[KEY[base]]); const ys = bars.map((b) => b[KEY[other]])
+  let xLo = Infinity; let xHi = -Infinity; let yLo = Infinity; let yHi = -Infinity
+  for (const v of xs) { if (v < xLo) xLo = v; if (v > xHi) xHi = v }
+  for (const v of ys) { if (v < yLo) yLo = v; if (v > yHi) yHi = v }
   const x = (v) => P + ((v - xLo) / (xHi - xLo || 1)) * (S - P - 8)
   const y = (v) => 8 + (1 - (v - yLo) / (yHi - yLo || 1)) * (S - P - 8)
+  const line = (v, k) => fit.a + fit.b * v + k * fit.sd
+  const cx = COLOR[base]; const cy = COLOR[other]
   return (
     <svg viewBox={`0 0 ${S} ${S}`} className="mx-auto h-auto w-full max-w-[340px]" role="img"
-         aria-label="ETH ATR against BTC ATR">
+         aria-label={`${other} ATR against ${base} ATR`}>
+      <defs>
+        <clipPath id="atr-scatter-plot">
+          <rect x={P} y={8} width={S - P - 8} height={S - P - 8} />
+        </clipPath>
+      </defs>
       <rect x={P} y={8} width={S - P - 8} height={S - P - 8} fill="none"
             stroke="rgba(255,255,255,0.08)" />
-      {Number.isFinite(btcMin) && btcMin > xLo && btcMin < xHi && (
-        <line x1={x(btcMin)} x2={x(btcMin)} y1={8} y2={S - P} stroke={BTC_C}
+      {fit && (
+        <path clipPath="url(#atr-scatter-plot)" fill={cy} fillOpacity="0.12"
+              d={`M${x(xLo)},${y(line(xLo, 1))}L${x(xHi)},${y(line(xHi, 1))}`
+                 + `L${x(xHi)},${y(line(xHi, -1))}L${x(xLo)},${y(line(xLo, -1))}Z`} />
+      )}
+      {Number.isFinite(baseMin) && baseMin > xLo && baseMin < xHi && (
+        <line x1={x(baseMin)} x2={x(baseMin)} y1={8} y2={S - P} stroke={cx}
               strokeDasharray="4 4" strokeOpacity="0.6" />
       )}
-      {Number.isFinite(ethMin) && ethMin > yLo && ethMin < yHi && (
-        <line x1={P} x2={S - 8} y1={y(ethMin)} y2={y(ethMin)} stroke={ETH_C}
+      {Number.isFinite(otherMin) && otherMin > yLo && otherMin < yHi && (
+        <line x1={P} x2={S - 8} y1={y(otherMin)} y2={y(otherMin)} stroke={cy}
               strokeDasharray="4 4" strokeOpacity="0.6" />
       )}
       {bars.map((b) => (
-        <circle key={b.t} cx={x(b.btc)} cy={y(b.eth)} r="2" fill="#7dd3fc" fillOpacity="0.45" />
+        <circle key={b.t} cx={x(b[KEY[base]])} cy={y(b[KEY[other]])} r="2"
+                fill="#7dd3fc" fillOpacity="0.45" />
       ))}
       {fit && (
-        <line x1={x(xLo)} y1={y(fit.a + fit.b * xLo)} x2={x(xHi)} y2={y(fit.a + fit.b * xHi)}
+        <line clipPath="url(#atr-scatter-plot)"
+              x1={x(xLo)} y1={y(line(xLo, 0))} x2={x(xHi)} y2={y(line(xHi, 0))}
               stroke="#e2e8f0" strokeOpacity="0.6" strokeWidth="1" />
       )}
-      <text x={P} y={S - P + 14} fontSize="10" fill={BTC_C}>{xLo.toFixed(0)}</text>
-      <text x={S - 8} y={S - P + 14} fontSize="10" fill={BTC_C} textAnchor="end">{xHi.toFixed(0)}</text>
-      <text x={(P + S) / 2} y={S - 6} fontSize="10" fill={BTC_C} textAnchor="middle">BTC ATR →</text>
-      <text x={P - 4} y={S - P} fontSize="10" fill={ETH_C} textAnchor="end">{yLo.toFixed(1)}</text>
-      <text x={P - 4} y={16} fontSize="10" fill={ETH_C} textAnchor="end">{yHi.toFixed(1)}</text>
-      <text x={10} y={(S - P) / 2} fontSize="10" fill={ETH_C} textAnchor="middle"
-            transform={`rotate(-90 10 ${(S - P) / 2})`}>ETH ATR →</text>
+      <text x={P} y={S - P + 14} fontSize="10" fill={cx}>{atrText(base, xLo)}</text>
+      <text x={S - 8} y={S - P + 14} fontSize="10" fill={cx} textAnchor="end">{atrText(base, xHi)}</text>
+      <text x={(P + S) / 2} y={S - 6} fontSize="10" fill={cx} textAnchor="middle">{base} ATR →</text>
+      <text x={P - 4} y={S - P} fontSize="10" fill={cy} textAnchor="end">{atrText(other, yLo)}</text>
+      <text x={P - 4} y={16} fontSize="10" fill={cy} textAnchor="end">{atrText(other, yHi)}</text>
+      <text x={10} y={(S - P) / 2} fontSize="10" fill={cy} textAnchor="middle"
+            transform={`rotate(-90 10 ${(S - P) / 2})`}>{other} ATR →</text>
     </svg>
+  )
+}
+
+/** The other asset's gate that matches the base's, from the fit, with its SD bands. */
+function Equivalent({ base, baseMin, otherMin, fit, onUse }) {
+  if (!fit || !Number.isFinite(baseMin)) return null
+  const other = OTHER[base]
+  const c = fit.a + fit.b * baseMin
+  const lo = (k) => Math.max(0, c - k * fit.sd)
+  const hi = (k) => c + k * fit.sd
+  const t = (v) => atrText(other, v)
+  const use = (v, key) => {
+    const r = roundAtr(other, v)
+    return (
+      <button key={key} type="button" onClick={() => onUse(r)} disabled={otherMin === r}
+              className="nums rounded-md border border-sky-500/30 px-2.5 py-1 text-[11px]
+                         font-medium text-sky-300 hover:bg-sky-500/10 disabled:opacity-40">
+        Use {t(r)}
+      </button>
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border
+                    border-sky-500/25 bg-sky-500/[0.06] px-3 py-2.5"
+         title={`Least-squares fit ${other} = ${fit.a.toFixed(2)} + ${fit.b.toFixed(3)} × ${base} over the window's bars. SD is the residual: how far ${other}'s real ATR has sat from the line. Percentages are the share of bars that actually fell inside each band.`}>
+      <div className="text-xs text-slate-300">
+        <p className="text-[11px] text-slate-500">Equivalent {other} ATR</p>
+        <p className="nums mt-0.5 text-sm">
+          <span style={{ color: COLOR[base] }}>{base} {atrText(base, baseMin)}</span>
+          {' → '}
+          <span className="font-semibold" style={{ color: COLOR[other] }}>{other} ≈ {t(c)}</span>
+        </p>
+        <p className="nums mt-1 text-[11px] text-slate-400">
+          ±1 SD {t(lo(1))} – {t(hi(1))}
+          <span className="text-slate-600"> ({fit.in1.toFixed(0)}% of bars)</span>
+          <span className="mx-2 text-slate-700">·</span>
+          ±2 SD {t(lo(2))} – {t(hi(2))}
+          <span className="text-slate-600"> ({fit.in2.toFixed(0)}% of bars)</span>
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {use(c, 'c')}{use(lo(1), 'lo')}{use(hi(1), 'hi')}
+      </div>
+    </div>
   )
 }
 
@@ -260,9 +383,13 @@ export default function AtrCompareTab({ accountId, accountName }) {
   const [candles, setCandles] = useState(null)   // { BTC: [...], ETH: [...] }
   const [legs, setLegs] = useState([])
   const [error, setError] = useState(null)
-  const [btcMin, setBtcMin] = useState(NaN)
-  const [ethMin, setEthMin] = useState(NaN)
+  const [base, setBase] = useState(DEFAULT_BASE)
+  const [baseMin, setBaseMin] = useState(DEFAULT_MIN)
+  // NaN = follow the fit: the other gate sits at the base gate's equivalent
+  // until a value is typed or picked.
+  const [otherPick, setOtherPick] = useState(NaN)
   const [showBars, setShowBars] = useState(false)
+  const other = OTHER[base]
 
   const days = RANGES.find(([k]) => k === range)[2]
   const period = Math.max(2, Number(cfg?.atr_period) || 14)
@@ -335,19 +462,12 @@ export default function AtrCompareTab({ accountId, accountName }) {
     }
     const covRet = covariance(retB, retE)
     const varB = covariance(retB, retB)
-    // Least-squares line for the scatter.
-    let fit = null
-    if (bars.length > 2) {
-      const mx = xs.reduce((a, v) => a + v, 0) / xs.length
-      const my = ys.reduce((a, v) => a + v, 0) / ys.length
-      let num = 0; let den = 0
-      for (let i = 0; i < xs.length; i += 1) {
-        num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) ** 2
-      }
-      if (den) fit = { b: num / den, a: my - (num / den) * mx }
-    }
+    // The other asset's ATR fitted on each possible base. Two separate fits,
+    // not one inverted: regressing BTC on ETH is a different line from ETH on
+    // BTC whenever the correlation is below 1.
+    const fits = { BTC: fitLine(xs, ys), ETH: fitLine(ys, xs) }
     return {
-      bars, sB, sE, fit,
+      bars, sB, sE, fits,
       rLevel: r,
       covLevel: covariance(xs, ys),
       rRet: pearson(retB, retE),
@@ -359,20 +479,20 @@ export default function AtrCompareTab({ accountId, accountName }) {
     }
   }, [candles, days, period])
 
-  // Thresholds start from the account's own minimum, in the asset its gate
-  // reads; the other asset's is that minimum scaled by the median BTC/ETH ATR
-  // ratio over the window, so both start at roughly the same strictness.
   const source = cfg ? (cfg.atr_asset || cfg.underlying || 'BTC') : null
-  const seedKey = `${accountId}|${source}|${cfg?.atr_min}|${data ? 'y' : 'n'}`
-  useEffect(() => {
-    if (!cfg || !data?.ratio) return
-    const min = Number(cfg.atr_min) || 0
-    if (source === 'ETH') {
-      setEthMin(min); setBtcMin(Math.round((min * data.ratio) / 5) * 5)
-    } else {
-      setBtcMin(min); setEthMin(Math.round((min / data.ratio) * 2) / 2)
-    }
-  }, [seedKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  const fit = data?.fits[base] ?? null
+  // The other gate follows the base's fitted equivalent until one is picked.
+  const otherMin = Number.isFinite(otherPick) ? otherPick
+    : fit && Number.isFinite(baseMin) ? roundAtr(other, fit.a + fit.b * baseMin) : NaN
+  const btcMin = base === 'BTC' ? baseMin : otherMin
+  const ethMin = base === 'ETH' ? baseMin : otherMin
+  const changeBase = (b) => {
+    if (b === base) return
+    // Swap: the other gate becomes the base, so the strictness carries over.
+    setBase(b)
+    setBaseMin(Number.isFinite(otherMin) ? otherMin : b === DEFAULT_BASE ? DEFAULT_MIN : NaN)
+    setOtherPick(NaN)
+  }
 
   const matrix = useMemo(() => {
     if (!data) return null
@@ -405,17 +525,16 @@ export default function AtrCompareTab({ accountId, accountName }) {
              agree: data.bars.length ? (100 * (cells.oo + cells.ss)) / data.bars.length : null }
   }, [data, legs, btcMin, ethMin])
 
-  // The "good number": the BTC gate that is open for the same share of bars
-  // as ETH's. With the two this correlated, it opens at nearly the same times.
+  // The other gate that is open for the same share of bars as the base's.
+  // With the two this correlated, it opens at nearly the same times.
   const matching = useMemo(() => {
-    if (!data?.bars.length || !Number.isFinite(ethMin)) return null
-    const open = data.bars.filter((b) => b.eth > ethMin).length
+    if (!data?.bars.length || !Number.isFinite(baseMin)) return null
+    const open = data.bars.filter((b) => b[KEY[base]] > baseMin).length
     const share = open / data.bars.length
-    const sorted = data.bars.map((b) => b.btc).sort((a, b) => a - b)
+    const sorted = data.bars.map((b) => b[KEY[other]]).sort((a, b) => a - b)
     const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((1 - share) * sorted.length)))
-    const btc = Math.round(sorted[idx])
-    return { share: 100 * share, btc }
-  }, [data, ethMin])
+    return { share: 100 * share, value: roundAtr(other, sorted[idx]) }
+  }, [data, base, other, baseMin])
 
   if (!accountId) {
     return <p className="py-10 text-center text-sm text-slate-600">Pick an account.</p>
@@ -431,10 +550,22 @@ export default function AtrCompareTab({ accountId, accountName }) {
             </button>
           ))}
         </div>
-        <Threshold asset="BTC" color={BTC_C} value={btcMin} onChange={setBtcMin}
-                   hint={source === 'BTC' ? '(account)' : '(scaled)'} />
-        <Threshold asset="ETH" color={ETH_C} value={ethMin} onChange={setEthMin}
-                   hint={source === 'ETH' ? '(account)' : '(scaled)'} />
+        <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+          Base
+          <div className="flex items-center gap-1" role="group" aria-label="Base ATR">
+            {['ETH', 'BTC'].map((a) => (
+              <button key={a} type="button" onClick={() => changeBase(a)}
+                      aria-pressed={base === a} className={chip(base === a)}
+                      style={base === a ? { color: COLOR[a] } : undefined}>
+                {a}
+              </button>
+            ))}
+          </div>
+        </div>
+        <Threshold asset={base} color={COLOR[base]} value={baseMin}
+                   onChange={(v) => { setBaseMin(v); setOtherPick(NaN) }} />
+        <Threshold asset={other} color={COLOR[other]} value={otherMin} onChange={setOtherPick}
+                   hint={Number.isFinite(otherPick) ? '(set)' : '(from fit)'} />
         <span className="text-[11px] text-slate-500 sm:ml-auto">
           {RES} candles · Wilder ATR({period}) · {accountName ?? 'account'} gates on{' '}
           <span className="font-semibold" style={{ color: source === 'ETH' ? ETH_C : BTC_C }}>
@@ -475,23 +606,26 @@ export default function AtrCompareTab({ accountId, accountName }) {
                   sub={`of ${data.bars.length} bars, at these thresholds`} />
           </div>
 
+          <Equivalent base={base} baseMin={baseMin} otherMin={otherMin} fit={fit}
+                      onUse={setOtherPick} />
+
           {matching && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border
-                            border-sky-500/25 bg-sky-500/[0.06] px-3 py-2.5">
+                            border-white/10 bg-ink-950 px-3 py-2.5">
               <div className="text-xs text-slate-300">
-                <p className="text-[11px] text-slate-500">Matching BTC gate</p>
+                <p className="text-[11px] text-slate-500">Same share of bars open</p>
                 <p className="nums mt-0.5">
-                  <span style={{ color: ETH_C }}>ETH &gt; {ethMin}</span> is open{' '}
+                  <span style={{ color: COLOR[base] }}>{base} &gt; {atrText(base, baseMin)}</span> is open{' '}
                   {matching.share.toFixed(0)}% of bars.{' '}
-                  <span style={{ color: BTC_C }}>BTC &gt; {matching.btc}</span> is open the same{' '}
-                  {matching.share.toFixed(0)}%, so it opens at nearly the same times.
+                  <span style={{ color: COLOR[other] }}>{other} &gt; {atrText(other, matching.value)}</span> is
+                  open the same {matching.share.toFixed(0)}%.
                 </p>
               </div>
-              <button type="button" onClick={() => setBtcMin(matching.btc)}
-                      disabled={btcMin === matching.btc}
+              <button type="button" onClick={() => setOtherPick(matching.value)}
+                      disabled={otherMin === matching.value}
                       className="rounded-md border border-sky-500/30 px-2.5 py-1 text-[11px]
                                  font-medium text-sky-300 hover:bg-sky-500/10 disabled:opacity-40">
-                Use {matching.btc} as BTC gate
+                Use {atrText(other, matching.value)} as {other} gate
               </button>
             </div>
           )}
@@ -503,14 +637,19 @@ export default function AtrCompareTab({ accountId, accountName }) {
                 <span style={{ color: BTC_C }}>━ BTC (left)</span>
                 <span style={{ color: ETH_C }}>━ ETH (right)</span>
                 <span className="text-slate-600">dashed = gate</span>
+                {fit && (
+                  <span style={{ color: COLOR[other] }}>
+                    ┄ {other} from {base}, shaded ±1 SD
+                  </span>
+                )}
               </p>
-              <TimeChart bars={data.bars} btcMin={btcMin} ethMin={ethMin} />
+              <TimeChart bars={data.bars} btcMin={btcMin} ethMin={ethMin} base={base} fit={fit} />
             </div>
             <div className="rounded-lg border border-white/10 bg-ink-950 p-3">
               <p className="mb-2 text-[11px] text-slate-500">
-                ETH vs BTC, one dot per 15m bar
+                {other} vs {base}, one dot per 15m bar · fit ±1 SD
               </p>
-              <Scatter bars={data.bars} btcMin={btcMin} ethMin={ethMin} fit={data.fit} />
+              <Scatter bars={data.bars} base={base} baseMin={baseMin} otherMin={otherMin} fit={fit} />
             </div>
           </div>
 
