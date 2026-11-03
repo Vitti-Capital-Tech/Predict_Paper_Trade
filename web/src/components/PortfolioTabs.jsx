@@ -47,6 +47,13 @@ const clockOf = (iso) => (iso
   : '—')
 
 const atrText = (v) => (v == null ? 'ATR —' : `ATR ${v.toFixed(1)}`)
+
+const medianOf = (vals) => {
+  if (!vals.length) return null
+  const s = vals.slice().sort((a, b) => a - b)
+  const m = Math.floor(s.length / 2)
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2
+}
 /** Spot beside the ATR, on one line: the two numbers the entry and
  *  exit rules are actually written in. */
 const spotText = (v) => (v == null ? ''
@@ -514,8 +521,11 @@ const ADOPTED_NOTE = 'Recorded from Delta. Delta was slow to confirm this order,
   + 'the bot read the filled trade straight from Delta a few seconds later and '
   + 'added it. A real trade, counted normally - nothing was bought twice.'
 
-function TradesTable({ positions, atrFor, atrLabel }) {
+function TradesTable({ positions, atrFor, atrOf, atrLabel, atrPeriod, atrResolution }) {
   const [openRound, setOpenRound] = useState(null)
+  // 'gate': the ATR this account's gate reads. 'both': BTC's and ETH's side by
+  // side at each entry, with their averages over the rounds shown.
+  const [atrView, setAtrView] = useState('gate')
   const [outcome, setOutcome] = useState('all')
   const [period, setPeriod] = useState('all')
   // Which legs have their fill breakdown open. A set rather than a single
@@ -575,6 +585,8 @@ function TradesTable({ positions, atrFor, atrLabel }) {
         closedAt,
         entryAtr: atrFor(asset, openedAt),
         exitAtr: atrFor(asset, closedAt),
+        entryBtc: atrOf('BTC', openedAt),
+        entryEth: atrOf('ETH', openedAt),
         expiry: expiryCodeToDate(code),
         strikes: [...new Set(g.legs.map((p) => Number(p.strike)))].sort((a, b) => a - b),
         invested,
@@ -587,7 +599,7 @@ function TradesTable({ positions, atrFor, atrLabel }) {
         outside: g.legs.some((p) => p.role === 'outside'),
       }
     }).sort((a, b) => (b.expiry?.getTime() ?? 0) - (a.expiry?.getTime() ?? 0))
-  }, [positions, atrFor])
+  }, [positions, atrFor, atrOf])
 
   if (!rounds.length) {
     return <p className="py-10 text-center text-sm text-slate-600">No completed trades yet.</p>
@@ -608,6 +620,24 @@ function TradesTable({ positions, atrFor, atrLabel }) {
     return r.closedAt >= weekAgo
   })
   const shownPnl = shown.reduce((a, r) => a + r.pnl, 0)
+
+  // Entry ATR across the rounds on screen, so the filters above (won, lost,
+  // a date range) change what it averages.
+  const entryStats = (key) => {
+    const pick = (rs) => rs.map((r) => r[key]).filter(Number.isFinite)
+    const avg = (v) => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : null)
+    const all = pick(shown)
+    return {
+      n: all.length,
+      avg: avg(all),
+      median: medianOf(all),
+      won: avg(pick(shown.filter((r) => r.pnl >= 0))),
+      lost: avg(pick(shown.filter((r) => r.pnl < 0))),
+    }
+  }
+  const atrStats = atrView === 'both'
+    ? [['BTC', entryStats('entryBtc'), 1], ['ETH', entryStats('entryEth'), 2]]
+    : null
 
   const when = (d) => (d
     ? d.toLocaleString('en-US', { timeZone: IST, day: 'numeric', month: 'short',
@@ -634,6 +664,13 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                     aria-pressed={period === k}>{label}</button>
           ))}
       </div>
+      <div className="flex items-center gap-1" role="group" aria-label="ATR shown">
+        <span className="mr-1 text-[11px] text-slate-500">ATR</span>
+        {[['gate', 'Gate'], ['both', 'BTC + ETH']].map(([k, label]) => (
+          <button key={k} onClick={() => setAtrView(k)} className={chip(atrView === k)}
+                  aria-pressed={atrView === k}>{label}</button>
+        ))}
+      </div>
       <span className="nums ml-auto text-[11px] text-slate-500">
         {shown.length} round{shown.length === 1 ? '' : 's'}
         {(outcome !== 'all' || period !== 'all') && shown.length > 0 && (
@@ -642,6 +679,36 @@ function TradesTable({ positions, atrFor, atrLabel }) {
         )}
       </span>
     </div>
+    {atrStats && shown.length > 0 && (
+      <div className="mb-3 overflow-x-auto rounded-lg border border-white/10 bg-ink-950"
+           title={`Wilder ATR(${atrPeriod}) on ${atrResolution} candles at each round's first entry`}>
+        <table className="nums w-full min-w-[440px] text-right text-xs">
+          <thead>
+            <tr className="border-b border-white/5 text-[11px] text-slate-500">
+              <th className="px-3 py-1.5 text-left font-medium">Entry ATR · {atrResolution} p{atrPeriod}</th>
+              <th className="px-3 py-1.5 font-medium">Average</th>
+              <th className="px-3 py-1.5 font-medium">Median</th>
+              <th className="px-3 py-1.5 font-medium">Won avg</th>
+              <th className="px-3 py-1.5 font-medium">Lost avg</th>
+              <th className="px-3 py-1.5 font-medium">Rounds</th>
+            </tr>
+          </thead>
+          <tbody>
+            {atrStats.map(([asset, st, dp]) => (
+              <tr key={asset} className="border-b border-white/[0.03] last:border-0 text-slate-200">
+                <td className={`px-3 py-1.5 text-left font-semibold ${
+                  asset === 'BTC' ? 'text-amber-400' : 'text-violet-300'}`}>{asset}</td>
+                <td className="px-3 py-1.5">{st.avg?.toFixed(dp) ?? '—'}</td>
+                <td className="px-3 py-1.5">{st.median?.toFixed(dp) ?? '—'}</td>
+                <td className="px-3 py-1.5 text-emerald-400">{st.won?.toFixed(dp) ?? '—'}</td>
+                <td className="px-3 py-1.5 text-rose-400">{st.lost?.toFixed(dp) ?? '—'}</td>
+                <td className="px-3 py-1.5 text-slate-500">{st.n}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
     {!shown.length ? (
       <p className="py-10 text-center text-sm text-slate-600">No rounds match these filters.</p>
     ) : (
@@ -692,7 +759,15 @@ function TradesTable({ positions, atrFor, atrLabel }) {
                   <td className="nums px-2 py-2.5 text-slate-400">
                     <div className="text-slate-300">{clockOf(
                       r.openedAt ? new Date(r.openedAt).toISOString() : null)}</div>
-                    <div className="text-[10px] text-slate-600">{atrText(r.entryAtr)}</div>
+                    <div className="whitespace-nowrap text-[10px] text-slate-600">
+                      {atrView === 'both' ? (
+                        <>
+                          <span className="text-amber-400/80">BTC {r.entryBtc?.toFixed(1) ?? '—'}</span>
+                          {' · '}
+                          <span className="text-violet-300/80">ETH {r.entryEth?.toFixed(2) ?? '—'}</span>
+                        </>
+                      ) : atrText(r.entryAtr)}
+                    </div>
                   </td>
                   <td className="nums px-2 py-2.5 text-slate-400">
                     <div className="text-slate-300">{clockOf(
@@ -978,10 +1053,11 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
   // memo returning `{assets, from}` handed the effect a new identity every
   // 2.5s and it refetched the same candles each time — four requests where
   // one was due. A string and a number compare by value and settle.
-  const atrAssets = useMemo(() => [...new Set(positions
-    .filter((p) => p.status !== 'open')
-    .map((p) => atrCfg.asset || assetOf(p.round_id))
-    .filter(Boolean))].sort().join(','), [positions, atrCfg.asset])
+  //
+  // Both assets, always: history can show BTC's and ETH's ATR side by side
+  // whatever the account trades or gates on. Two requests, not one per trade.
+  const atrAssets = useMemo(
+    () => (positions.some((p) => p.status !== 'open') ? 'BTC,ETH' : ''), [positions])
 
   const atrFrom = useMemo(() => {
     const stamps = positions
@@ -1016,6 +1092,13 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
     if (!Number.isFinite(tsMs)) return null
     return atrAt(atrByAsset[atrCfg.asset || asset], Math.floor(tsMs / 1000))
   }, [atrByAsset, atrCfg.asset])
+
+  // One asset's ATR as it stood at `tsMs`, with no gate mapping - for the
+  // BTC + ETH view of trade history.
+  const atrOf = useCallback((asset, tsMs) => {
+    if (!Number.isFinite(tsMs)) return null
+    return atrAt(atrByAsset[asset], Math.floor(tsMs / 1000))
+  }, [atrByAsset])
 
   const atrLabel = `Wilder ATR(${atrCfg.period}) on ${atrCfg.asset ? `${atrCfg.asset} ` : ''}${atrCfg.resolution} candles,`
     + ' taken from the filters this account is running now'
@@ -1380,7 +1463,8 @@ export default function PortfolioTabs({ account, accountId, slippage = 0.05,
         ) : tab === 'atr' ? (
           <AtrCompareTab accountId={accountId} accountName={account?.name} />
         ) : (
-          <TradesTable positions={closed} atrFor={atrFor} atrLabel={atrLabel} />
+          <TradesTable positions={closed} atrFor={atrFor} atrOf={atrOf} atrLabel={atrLabel}
+                       atrPeriod={atrCfg.period} atrResolution={atrCfg.resolution} />
         )}
       </div>
     </div>
