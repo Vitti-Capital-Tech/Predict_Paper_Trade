@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from .delta import DeltaClient
-from .fills import FillEngine
+from .fills import Fill, FillEngine, PRICE_MIN
 from .indicators import AtrGate
 from .portfolio import Portfolio, Position
 from .rounds import (Contract, Round, build_rounds, parse_symbol,
@@ -598,9 +598,30 @@ class Engine:
             else:
                 book = (self._book(pos.symbol)
                         if self.cfg.fills.refetch_book_on_execute else None)
-                fill = self.fills.simulate("sell", pos.qty, book,
-                                           contract.best_bid, contract.best_ask,
-                                           contract.mark_price)
+                # Mirror the live exit floor. The live branch above sells into
+                # the bid and refuses to fill worse than bid - max_slippage, so
+                # a thin wing simply does not fill ("no fill at <floor>"). The
+                # paper twin must refuse the same sell rather than sweep the thin
+                # bid ladder, or it banks ITM-wing exits a real order never gets
+                # and reports gains live cannot reach. trim_to_budget is a no-op
+                # under the optimistic (best_quote/mark) models, so this bites
+                # only where the order book is actually walked.
+                bid = contract.best_bid
+                if bid is None or bid <= 0:
+                    fill = Fill(False, 0.0, 0.0, "nothing bid",
+                                requested_qty=pos.qty)
+                else:
+                    floor = (bid if cfg.entry.max_slippage is None
+                             else max(PRICE_MIN, bid - cfg.entry.max_slippage))
+                    qty_sell = self.fills.trim_to_budget("sell", pos.qty, book, floor)
+                    if qty_sell < pos.qty and not self.cfg.fills.allow_partial:
+                        fill = Fill(False, 0.0, 0.0, "no fill at %.4f" % floor,
+                                    requested_qty=pos.qty)
+                    else:
+                        fill = self.fills.simulate("sell", qty_sell, book,
+                                                   contract.best_bid,
+                                                   contract.best_ask,
+                                                   contract.mark_price)
 
             if not fill.filled:
                 log.warning("exit blocked for %s: %s", pos.symbol, fill.reason)
